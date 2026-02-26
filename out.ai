@@ -115,7 +115,25 @@ This version stays true to "let mother nature do the work" while still providing
 
 
 of course, if a super token runs out of energy, they die, perhaps energy sharing is a nice addition later on.
+-e 
 
+===== concat.sh =====
+#!/bin/bash
+
+OUTPUT="out.ai"
+> "$OUTPUT"
+
+FILES=$(git ls-files | grep -E '\.(py|md|go|sh|toml|yaml|yml|Makefile)$' | grep -v '^out/' | grep -v '^data/' | grep -v '__pycache__')
+
+for f in $FILES; do
+  echo "===== $f =====" >> "$OUTPUT"
+  cat "$f" >> "$OUTPUT"
+  echo -e "\n" >> "$OUTPUT"
+done
+
+echo "Written to $OUTPUT"
+wc -c "$OUTPUT"
+-e 
 
 ===== config.py =====
 from __future__ import annotations
@@ -147,17 +165,24 @@ class EmeraConfig:
     gap_len: int = 128
     gap_decay: float = 0.97
     gap_velocity_decay: float = 0.90
+    gap_read_backend: str = "auto"  # {"auto", "numpy", "jax"}
+    gap_read_batch_size: int = 128
     omega_base: float = 0.035
     omega_jitter: float = 0.010
     beacon_strength: float = 0.10
 
     # Chaos/proposal
     num_ifs: int = 4
-    chaos_substeps_per_round: int = 1
+    chaos_substeps_per_round: int = (
+        1  # legacy: ignored when energy-regulated; kept for SVG compat
+    )
+    chaos_min_substeps: int = 1
+    chaos_max_substeps: int = 24
+    chaos_substep_cost: float = 0.004
     chaos_svg_default_steps: int = 2000
     chaos_svg_max_steps: int = 50000
     k_rounds: int = 6
-    proposal_lmax: int = 8
+    proposal_lmax: int = 14
     confidence_scale: float = 10.0
     proposal_drift_scale: float = 0.08
     obligatory_proposals: bool = True
@@ -166,9 +191,9 @@ class EmeraConfig:
     proposal_bet_max_energy_frac: float = 0.12
     proposal_bet_floor_frac: float = 0.08
     proposal_bet_conf_gain: float = 8.0
-    proposal_frontier_contrast: int = 8
-    proposal_frontier_fallback: int = 24
-    frontier_rescue_energy: float = 0.60
+    proposal_frontier_contrast: int = 16
+    proposal_frontier_fallback: int = 32
+    frontier_rescue_energy: float = 0.55
     frontier_rescue_noise: float = 0.04
     frontier_rescue_max_per_step: int = 1
     contrastive_enabled: bool = True
@@ -198,7 +223,7 @@ class EmeraConfig:
     discovery_cost: float = 0.18
     token_energy_cap: float = 50.0
     min_viable_energy: float = 1e-4
-    survivor_grace_steps: int = 8
+    survivor_grace_steps: int = 20
     survivor_relief_active_frac: float = 0.35
     survivor_relief_reservoir_frac: float = 0.01
     strict_energy_budget: bool = True
@@ -210,8 +235,8 @@ class EmeraConfig:
     death_recycle_flat: float = 0.0
 
     # Silence credit
-    silence_log_coeff: float = 0.004
-    silence_exp_coeff: float = 0.0010
+    silence_log_coeff: float = 0.006
+    silence_exp_coeff: float = 0.0014
     silence_exp_rate: float = 0.015
 
     # Jackpot
@@ -220,16 +245,20 @@ class EmeraConfig:
     jackpot_silence_scale: float = 0.40
 
     # Symbiogenesis
-    spawn_cost: float = 1.00
-    mint_interval: int = 25
-    mint_delta: float = 0.00
-    self_copy_enabled: bool = False
-    self_copy_interval: int = 5
-    self_copy_cost: float = 0.50
-    self_copy_min_energy: float = 1.20
-    self_copy_min_match_frac: float = 1.00
+    spawn_cost: float = 0.45
+    mint_interval: int = 6
+    mint_delta: float = -0.20
+    mint_parent_contrib_frac: float = 0.35
+    capsule_frontier_window: int = 48
+    capsule_mint_parent_pool: int = 10
+    self_copy_enabled: bool = True
+    self_copy_interval: int = 3
+    self_copy_cost: float = 0.30
+    self_copy_parent_contrib_frac: float = 0.35
+    self_copy_min_energy: float = 0.80
+    self_copy_min_match_frac: float = 0.50
     self_copy_min_score: float = 0.0
-    self_copy_max_per_step: int = 1
+    self_copy_max_per_step: int = 2
     ema_alpha: float = 0.02
     mutation_scale: float = 0.08
     ifs_mutation_scale: float = 0.03
@@ -242,7 +271,7 @@ class EmeraConfig:
     pareto_clip: float = 12.0
 
     # Reward split for child success
-    child_reward_share: float = 0.80
+    child_reward_share: float = 0.72
     parent_reward_share: float = 0.10
 
     # Adaptive natural laws (environment-driven)
@@ -279,6 +308,7 @@ class EmeraConfig:
     season_wave_decay: float = 0.65
     season_revival_spores: int = 24
     season_revival_energy: float = 1.1
+    season_topology_jitter: float = 0.02
 
     # Logging
     log_every: int = 50
@@ -298,10 +328,22 @@ class EmeraConfig:
             raise ValueError("gap_dim must be >= 4.")
         if self.gap_dim > self.d_latent:
             raise ValueError("gap_dim must be <= d_latent.")
+        if self.gap_read_backend not in {"auto", "numpy", "jax"}:
+            raise ValueError(
+                "gap_read_backend must be one of {'auto', 'numpy', 'jax'}."
+            )
+        if self.gap_read_batch_size < 1:
+            raise ValueError("gap_read_batch_size must be >= 1.")
         if self.num_ifs < 1:
             raise ValueError("num_ifs must be >= 1.")
         if self.chaos_substeps_per_round < 1:
             raise ValueError("chaos_substeps_per_round must be >= 1.")
+        if self.chaos_min_substeps < 1:
+            raise ValueError("chaos_min_substeps must be >= 1.")
+        if self.chaos_max_substeps < self.chaos_min_substeps:
+            raise ValueError("chaos_max_substeps must be >= chaos_min_substeps.")
+        if self.chaos_substep_cost < 0.0:
+            raise ValueError("chaos_substep_cost must be >= 0.")
         if self.chaos_svg_default_steps < 1:
             raise ValueError("chaos_svg_default_steps must be >= 1.")
         if self.chaos_svg_max_steps < self.chaos_svg_default_steps:
@@ -340,10 +382,20 @@ class EmeraConfig:
             raise ValueError("initial_super_tokens must be >= 1.")
         if self.spawn_cost <= 0:
             raise ValueError("spawn_cost must be > 0.")
+        if not (0.0 <= self.mint_parent_contrib_frac <= 1.0):
+            raise ValueError("mint_parent_contrib_frac must be in [0, 1].")
+        if self.capsule_frontier_window < 1:
+            raise ValueError("capsule_frontier_window must be >= 1.")
+        if self.capsule_frontier_window > self.gap_len:
+            raise ValueError("capsule_frontier_window must be <= gap_len.")
+        if self.capsule_mint_parent_pool < 2:
+            raise ValueError("capsule_mint_parent_pool must be >= 2.")
         if self.self_copy_interval < 1:
             raise ValueError("self_copy_interval must be >= 1.")
         if self.self_copy_cost <= 0.0:
             raise ValueError("self_copy_cost must be > 0.")
+        if not (0.0 <= self.self_copy_parent_contrib_frac <= 1.0):
+            raise ValueError("self_copy_parent_contrib_frac must be in [0, 1].")
         if self.self_copy_min_energy < 0.0:
             raise ValueError("self_copy_min_energy must be >= 0.")
         if not (0.0 <= self.self_copy_min_match_frac <= 1.0):
@@ -369,7 +421,9 @@ class EmeraConfig:
         if self.energy_reservoir_cap <= 0.0:
             raise ValueError("energy_reservoir_cap must be > 0.")
         if self.conserve_total_energy and self.energy_inflow_per_step != 0.0:
-            raise ValueError("conserve_total_energy requires energy_inflow_per_step == 0.")
+            raise ValueError(
+                "conserve_total_energy requires energy_inflow_per_step == 0."
+            )
         if not (0.0 <= self.death_recycle_fraction <= 1.0):
             raise ValueError("death_recycle_fraction must be in [0, 1].")
         if self.death_recycle_flat < 0.0:
@@ -388,6 +442,8 @@ class EmeraConfig:
             raise ValueError("season_revival_spores must be >= 0.")
         if self.season_revival_energy <= 0.0:
             raise ValueError("season_revival_energy must be > 0.")
+        if self.season_topology_jitter < 0.0:
+            raise ValueError("season_topology_jitter must be >= 0.")
         if not (0.0 <= self.adaptation_ema_decay < 1.0):
             raise ValueError("adaptation_ema_decay must be in [0, 1).")
         if self.adaptation_rate < 0.0:
@@ -396,7 +452,10 @@ class EmeraConfig:
             raise ValueError("adaptation_signal_decay must be in [0, 1).")
         if self.pareto_alpha_init < 1.01:
             raise ValueError("pareto_alpha_init must be >= 1.01.")
-        if self.pareto_alpha_min < 1.01 or self.pareto_alpha_max < self.pareto_alpha_min:
+        if (
+            self.pareto_alpha_min < 1.01
+            or self.pareto_alpha_max < self.pareto_alpha_min
+        ):
             raise ValueError("invalid pareto alpha bounds.")
         if not (0.0 <= self.child_reward_share <= 1.0):
             raise ValueError("child_reward_share must be in [0, 1].")
@@ -409,7 +468,7 @@ class EmeraConfig:
             path = Path(self.corpus_file)
             if not path.exists():
                 raise FileNotFoundError(f"corpus_file does not exist: {path}")
-
+-e 
 
 ===== cooperation.py =====
 from __future__ import annotations
@@ -474,7 +533,7 @@ class CooperationStats:
         self.ind_ema = {k: v for k, v in self.ind_ema.items() if k in alive}
         self.pair_ema = {k: v for k, v in self.pair_ema.items() if (k[0] in alive and k[1] in alive)}
         self.pair_hits = {k: v for k, v in self.pair_hits.items() if (k[0] in alive and k[1] in alive)}
-
+-e 
 
 ===== dashboard.py =====
 #!/usr/bin/env python3
@@ -482,6 +541,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import re
 import threading
 import time
@@ -497,7 +557,9 @@ from config import EmeraConfig
 from engine import EmeraEngine, StepResult
 
 
-def _decode_identity(engine: EmeraEngine, identity_values: np.ndarray, max_chars: int = 48) -> str:
+def _decode_identity(
+    engine: EmeraEngine, identity_values: np.ndarray, max_chars: int = 48
+) -> str:
     vals = np.asarray(identity_values, dtype=np.int32).tolist()
     text = engine.decode_tokens_text(vals, max_chars=max_chars)
     if len(text) > max_chars:
@@ -520,7 +582,9 @@ def _parse_float(v: str | None, default: float) -> float:
         return default
 
 
-def _parse_int(v: str | None, default: int, lo: int | None = None, hi: int | None = None) -> int:
+def _parse_int(
+    v: str | None, default: int, lo: int | None = None, hi: int | None = None
+) -> int:
     if v is None:
         out = default
     else:
@@ -551,7 +615,9 @@ class Trainer:
         self.last_inference: dict[str, Any] | None = None
         self.total_steps = 0
         self.error = ""
-        self.thread = threading.Thread(target=self._loop, daemon=True, name="emera-trainer")
+        self.thread = threading.Thread(
+            target=self._loop, daemon=True, name="emera-trainer"
+        )
 
     def start(self) -> None:
         self.thread.start()
@@ -601,7 +667,9 @@ class Trainer:
             right = self.engine.decode_tokens_text(vals[window + 1 :], max_chars=200)
             marked = f"{left}[{cur}]{right}"
             frontier_token = int(self.engine.world.peek(1)[0]) if n > 0 else -1
-            frontier_tag = f"{frontier_token}:{cur.encode('unicode_escape').decode('ascii')}"
+            frontier_tag = (
+                f"{frontier_token}:{cur.encode('unicode_escape').decode('ascii')}"
+            )
             return "TOKEN_STREAM [*]", marked, frontier_tag
 
         n = int(self.world_bytes.size)
@@ -660,9 +728,17 @@ class Trainer:
                 "frontier_hex": frontier_hex,
                 "glide": float(snap.get("glide_ratio", 0.0)),
                 "epa": float(snap.get("energy_per_advance", 0.0)),
+                "root_frac": float(snap.get("root_only_fraction", 1.0)),
+                "caps_nonroot": int(snap.get("nonroot_live_capsules", 0)),
+                "caps_half_life": float(snap.get("capsule_half_life", 0.0)),
+                "caps_t1k": float(snap.get("lineage_persistence_1k", 0.0)),
+                "chaos_avg_sub": float(snap.get("chaos_avg_substeps", 0.0)),
+                "chaos_energy": float(snap.get("chaos_energy_spent", 0.0)),
             }
 
-    def supertokens(self, sort_by: str, desc: bool, min_energy: float, query: str, limit: int) -> list[dict[str, Any]]:
+    def supertokens(
+        self, sort_by: str, desc: bool, min_energy: float, query: str, limit: int
+    ) -> list[dict[str, Any]]:
         with self.lock:
             step_idx = int(self.engine.step_idx)
             q = query.lower().strip()
@@ -687,10 +763,16 @@ class Trainer:
                         "age": int(age),
                         "energy": float(energy),
                         "inactive": int(token.inactivity_steps),
-                        "len": int(np.asarray(token.identity_bytes, dtype=np.int32).size),
+                        "len": int(
+                            np.asarray(token.identity_bytes, dtype=np.int32).size
+                        ),
                         "conf": float(conf),
                         "text": text,
-                        "contains_frontier": bool(self.engine._identity_contains_frontier_byte(token.identity_bytes)),
+                        "contains_frontier": bool(
+                            self.engine._identity_contains_frontier_byte(
+                                token.identity_bytes
+                            )
+                        ),
                         "lineage": "root"
                         if int(token.parent_a) < 0 and int(token.parent_b) < 0
                         else f"{int(token.parent_a)},{int(token.parent_b)}",
@@ -709,7 +791,13 @@ class Trainer:
             rows.sort(key=key_fn, reverse=desc)
             return rows[: max(limit, 1)]
 
-    def chaos_svg(self, token_id: int, steps: int | None = None, width: int = 440, height: int = 230) -> str:
+    def chaos_svg(
+        self,
+        token_id: int,
+        steps: int | None = None,
+        width: int = 440,
+        height: int = 230,
+    ) -> str:
         with self.lock:
             token = self.engine.super_tokens.get(int(token_id))
             if token is None:
@@ -741,7 +829,9 @@ class Trainer:
         pad = 10.0
         xs = ((pts[:, 0] + 1.0) * 0.5) * (width - 2 * pad) + pad
         ys = (1.0 - (pts[:, 1] + 1.0) * 0.5) * (height - 2 * pad) + pad
-        point_str = " ".join(f"{x:.2f},{y:.2f}" for x, y in zip(xs.tolist(), ys.tolist()))
+        point_str = " ".join(
+            f"{x:.2f},{y:.2f}" for x, y in zip(xs.tolist(), ys.tolist())
+        )
         return (
             "<div class='card'>"
             f"<strong>Chaos Game | token {tid}</strong>"
@@ -832,6 +922,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
+        data = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
@@ -850,6 +948,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/partials/gap":
             self._send_html(self._render_gap(qs))
+            return
+        if path == "/api/status":
+            t = self._trainer()
+            status = t.status_snapshot()
+            snap = t.engine.metrics.snapshot()
+            payload = {
+                "step": int(status.get("step", 0)),
+                "active_super": int(status.get("active", 0)),
+                "energy_per_advance": float(snap.get("energy_per_advance", 0.0)),
+                "glide_ratio": float(snap.get("glide_ratio", 0.0)),
+                "gap_compression_ratio": float(snap.get("gap_compression_ratio", 1.0)),
+                "best_gap_compression_ratio": float(
+                    snap.get("best_gap_compression_ratio", 1.0)
+                ),
+                "max_symbio_depth": int(snap.get("max_symbio_depth", 0)),
+                "root_only_fraction": float(snap.get("root_only_fraction", 1.0)),
+                "nonroot_live_capsules": int(snap.get("nonroot_live_capsules", 0)),
+                "capsule_half_life": float(snap.get("capsule_half_life", 0.0)),
+                "lineage_persistence_1k": float(
+                    snap.get("lineage_persistence_1k", 0.0)
+                ),
+                "chaos_energy_spent": float(snap.get("chaos_energy_spent", 0.0)),
+                "chaos_avg_substeps": float(snap.get("chaos_avg_substeps", 0.0)),
+            }
+            self._send_json(payload)
             return
         self._send_html("<h1>404</h1>", status=404)
 
@@ -891,7 +1014,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", "0") or "0")
         except ValueError:
             n = 0
-        raw = self.rfile.read(max(n, 0)).decode("utf-8", errors="ignore") if n > 0 else ""
+        raw = (
+            self.rfile.read(max(n, 0)).decode("utf-8", errors="ignore") if n > 0 else ""
+        )
         parsed = parse_qs(raw)
         out: dict[str, str] = {}
         for k, vals in parsed.items():
@@ -983,7 +1108,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         t = self._trainer().status_snapshot()
         state_cls = "ok" if t["running"] else ("bad" if t["error"] else "warn")
         state_txt = "running" if t["running"] else ("error" if t["error"] else "paused")
-        err = f"<div class='pill bad mono'>{html.escape(str(t['error']))}</div>" if t["error"] else ""
+        err = (
+            f"<div class='pill bad mono'>{html.escape(str(t['error']))}</div>"
+            if t["error"]
+            else ""
+        )
         return (
             "<div id='status' class='card'>"
             "<div class='row' style='justify-content:space-between;'>"
@@ -1010,6 +1139,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             f"<span class='k'>drift</span><span class='v'>{t['drift']:+.4f}</span>"
             f"<span class='k'>EPA</span><span class='v'>{t['epa']:.4f}</span>"
             f"<span class='k'>glide</span><span class='v'>{t['glide']:.3f}</span>"
+            f"<span class='k'>root_frac</span><span class='v'>{t['root_frac']:.3f}</span>"
+            f"<span class='k'>caps_nonroot</span><span class='v'>{t['caps_nonroot']}</span>"
+            f"<span class='k'>caps_t1k</span><span class='v'>{t['caps_t1k']:.3f}</span>"
+            f"<span class='k'>caps_half_life</span><span class='v'>{t['caps_half_life']:.1f}</span>"
+            f"<span class='k'>chaos_sub</span><span class='v'>{t['chaos_avg_sub']:.1f}</span>"
+            f"<span class='k'>chaos_E</span><span class='v'>{t['chaos_energy']:.4f}</span>"
             "</div>"
             f"{err}"
             "</div>"
@@ -1017,12 +1152,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _render_supertokens(self, qs: dict[str, list[str]]) -> str:
         sort = (qs.get("sort", ["energy"])[0] or "energy").strip()
-        desc = _parse_bool(qs.get("desc", ["on"])[0] if "desc" in qs else None, default=True)
+        desc = _parse_bool(
+            qs.get("desc", ["on"])[0] if "desc" in qs else None, default=True
+        )
         min_energy = _parse_float(qs.get("min_energy", ["0"])[0], default=0.0)
         limit = _parse_int(qs.get("limit", ["120"])[0], default=120, lo=1, hi=2000)
-        chaos_steps = _parse_int(qs.get("chaos_steps", ["2000"])[0], default=2000, lo=1, hi=50000)
+        chaos_steps = _parse_int(
+            qs.get("chaos_steps", ["2000"])[0], default=2000, lo=1, hi=50000
+        )
         q = qs.get("q", [""])[0]
-        rows = self._trainer().supertokens(sort_by=sort, desc=desc, min_energy=min_energy, query=q, limit=limit)
+        rows = self._trainer().supertokens(
+            sort_by=sort, desc=desc, min_energy=min_energy, query=q, limit=limit
+        )
 
         head = (
             "<div class='muted' style='margin:8px 0;'>"
@@ -1063,7 +1204,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _render_gap(self, qs: dict[str, list[str]]) -> str:
         limit = _parse_int(qs.get("limit", ["24"])[0], default=24, lo=1, hi=200)
-        scatter_limit = _parse_int(qs.get("scatter", ["220"])[0], default=220, lo=16, hi=1000)
+        scatter_limit = _parse_int(
+            qs.get("scatter", ["220"])[0], default=220, lo=16, hi=1000
+        )
         snap = self._trainer().gap_snapshot(limit=limit, scatter_limit=scatter_limit)
         rows = snap["rows"]
         scatter = snap["scatter"]
@@ -1110,7 +1253,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         debug = out.get("debug", [])
         debug_html = ""
         if isinstance(debug, list) and debug:
-            debug_html = "<div class='muted' style='margin-top:6px;'>" + "<br/>".join(html.escape(str(x)) for x in debug[:8]) + "</div>"
+            debug_html = (
+                "<div class='muted' style='margin-top:6px;'>"
+                + "<br/>".join(html.escape(str(x)) for x in debug[:8])
+                + "</div>"
+            )
         return (
             "<div class='card'>"
             f"<div class='muted'>mode={html.escape(str(out.get('token_space', '?')))} "
@@ -1126,19 +1273,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Emera HTMX dashboard with threaded training")
+    p = argparse.ArgumentParser(
+        description="Emera HTMX dashboard with threaded training"
+    )
     p.add_argument("--host", type=str, default="127.0.0.1")
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--token-space", type=str, choices=["byte_parity", "gpt2"], default="byte_parity")
+    p.add_argument(
+        "--token-space",
+        type=str,
+        choices=["byte_parity", "gpt2"],
+        default="gpt2",
+    )
     p.add_argument("--gpt2-model-name", type=str, default="gpt2")
     p.add_argument("--base-tokens", type=int, default=None)
+    p.add_argument("--d-latent", type=int, default=32)
+    p.add_argument("--gap-dim", type=int, default=16)
+    p.add_argument("--gap-len", type=int, default=128)
+    p.add_argument("--k-rounds", type=int, default=6)
     p.add_argument("--chaos-substeps-per-round", type=int, default=1)
     p.add_argument("--chaos-svg-default-steps", type=int, default=2000)
     p.add_argument("--chaos-svg-max-steps", type=int, default=50000)
+    p.add_argument(
+        "--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default="auto"
+    )
+    p.add_argument("--gap-read-batch-size", type=int, default=128)
+    p.add_argument("--capsule-frontier-window", type=int, default=48)
+    p.add_argument("--capsule-mint-parent-pool", type=int, default=10)
+    p.add_argument("--season-topology-jitter", type=float, default=0.02)
+    p.add_argument("--chaos-min-substeps", type=int, default=1)
+    p.add_argument("--chaos-max-substeps", type=int, default=64)
+    p.add_argument("--chaos-substep-cost", type=float, default=0.004)
     p.add_argument("--corpus-file", type=str, default="data/bible.txt")
     p.add_argument("--world-len", type=int, default=200_000)
-    p.add_argument("--world-vocab-size", type=int, default=512)
+    p.add_argument("--world-vocab-size", type=int, default=50257)
     p.add_argument("--steps-per-tick", type=int, default=1)
     p.add_argument("--sleep-ms", type=float, default=0.0)
     return p.parse_args()
@@ -1163,10 +1331,26 @@ def main() -> None:
         seed=int(args.seed),
         token_space=str(args.token_space),
         gpt2_model_name=str(args.gpt2_model_name),
-        base_tokens=int(base_tokens) if base_tokens is not None else EmeraConfig().base_tokens,
+        base_tokens=int(base_tokens)
+        if base_tokens is not None
+        else EmeraConfig().base_tokens,
+        d_latent=max(int(args.d_latent), 4),
+        gap_dim=max(int(args.gap_dim), 4),
+        gap_len=max(int(args.gap_len), 4),
+        k_rounds=max(int(args.k_rounds), 1),
         chaos_substeps_per_round=max(int(args.chaos_substeps_per_round), 1),
         chaos_svg_default_steps=max(int(args.chaos_svg_default_steps), 1),
-        chaos_svg_max_steps=max(int(args.chaos_svg_max_steps), int(args.chaos_svg_default_steps), 1),
+        chaos_svg_max_steps=max(
+            int(args.chaos_svg_max_steps), int(args.chaos_svg_default_steps), 1
+        ),
+        gap_read_backend=str(args.gap_read_backend),
+        gap_read_batch_size=max(int(args.gap_read_batch_size), 1),
+        capsule_frontier_window=max(int(args.capsule_frontier_window), 1),
+        capsule_mint_parent_pool=max(int(args.capsule_mint_parent_pool), 2),
+        season_topology_jitter=max(float(args.season_topology_jitter), 0.0),
+        chaos_min_substeps=max(int(args.chaos_min_substeps), 1),
+        chaos_max_substeps=max(int(args.chaos_max_substeps), 1),
+        chaos_substep_cost=max(float(args.chaos_substep_cost), 0.0),
         corpus_file=corpus,
         world_len=int(args.world_len),
         world_vocab_size=int(world_vocab),
@@ -1195,7 +1379,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
+-e 
 
 ===== engine.py =====
 from __future__ import annotations
@@ -1204,6 +1388,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 import numpy as np
+import zlib
 
 from config import EmeraConfig
 from cooperation import CooperationStats
@@ -1226,7 +1411,12 @@ from ledger import (
     silence_credit_with_coeffs,
 )
 from metrics import MetricsTracker
-from world import World, decode_gpt2_tokens, encode_gpt2_tokens, encode_utf8_parity_tokens
+from world import (
+    World,
+    decode_gpt2_tokens,
+    encode_gpt2_tokens,
+    encode_utf8_parity_tokens,
+)
 
 
 def _normalize(v: np.ndarray, eps: float = 1e-8) -> np.ndarray:
@@ -1257,17 +1447,27 @@ class EmeraEngine:
         self.decode_latent = self.base_latent[self.decode_token_ids]
         self.gap = GapField(cfg)
         identity_bank = self._build_initial_identity_bank(cfg.initial_super_tokens)
-        self.super_tokens: dict[int, SuperToken] = create_initial_population(
+        initial_population = create_initial_population(
             cfg=cfg,
             rng=self.rng,
             start_token_id=self.base_vocab_size,
             birth_step=0,
             identity_bank=identity_bank,
         )
+        self.super_tokens: dict[int, SuperToken] = {}
+        self.token_anchor_slot: dict[int, int] = {}
+        self.lineage_depth: dict[int, int] = {
+            int(tid): 0 for tid in initial_population.keys()
+        }
+        self.max_symbio_depth_ever = 0
         self.next_token_id = self.base_vocab_size + cfg.initial_super_tokens
+        self.capsule_half_life_ema = 0.0
+        self.capsule_death_events = 0
+        self.step_idx = 0
+        self._seed_initial_capsules(initial_population)
+        self._sync_super_tokens_from_gap()
         self.coop = CooperationStats(alpha=cfg.ema_alpha)
         self.metrics = MetricsTracker()
-        self.step_idx = 0
         self.last_resonance_strength: dict[int, float] = {}
         self.laws = {
             "attempt_cost_base": float(cfg.attempt_cost_base),
@@ -1279,7 +1479,7 @@ class EmeraEngine:
             "mint_delta": float(cfg.mint_delta),
             "pareto_alpha": float(cfg.pareto_alpha_init),
         }
-        active0 = float(len(self.super_tokens))
+        active0 = float(max(len(self.super_tokens), 1))
         self.law_ema = {
             "active": active0,
             "match_rate": 0.0,
@@ -1318,30 +1518,241 @@ class EmeraEngine:
 
     def _build_initial_identity_bank(self, count: int) -> list[np.ndarray]:
         bank: list[np.ndarray] = []
-        lmax = max(int(self.cfg.proposal_lmax), 1)
         for _ in range(max(0, int(count))):
-            # Bias toward short byte combos (2-4) while still allowing 1-byte specialists.
-            if lmax == 1:
-                l = 1
-            else:
-                r = float(self.rng.random())
-                if r < 0.15:
-                    l = 1
-                elif r < 0.55:
-                    l = min(2, lmax)
-                elif r < 0.85:
-                    l = min(3, lmax)
-                else:
-                    l = lmax
-            bank.append(self._sample_identity_bytes_from_world(l))
+            bank.append(self._sample_identity_bytes_from_world(2))
         return bank
+
+    def _seed_initial_capsules(self, initial_population: dict[int, SuperToken]) -> None:
+        if not initial_population:
+            return
+        slots = np.arange(int(self.cfg.gap_len), dtype=np.int32)
+        self.rng.shuffle(slots)
+        for i, token in enumerate(initial_population.values()):
+            slot = int(slots[i % slots.size])
+            self.gap.clear_slot(slot)
+            self.gap.points[slot] = np.asarray(token.signature, dtype=np.float32)
+            self.gap.velocity[slot] = 0.0
+            self.gap.phase[slot] = float(token.phase)
+            self.gap.omega[slot] = float(token.omega)
+            self.gap.energy[slot] = float(
+                np.clip(token.energy, 0.0, self.cfg.token_energy_cap)
+            )
+            self.gap.emitter_id[slot] = int(token.token_id)
+            self.gap.step_idx[slot] = int(self.step_idx)
+            self.gap.round_idx[slot] = 0
+            self.gap.genome_fragment[slot].fill(-1)
+            ident = np.asarray(token.identity_bytes, dtype=np.int32).reshape(-1)
+            n = min(int(ident.size), int(self.gap.genome_fragment.shape[1]))
+            if n > 0:
+                self.gap.genome_fragment[slot, :n] = ident[:n]
+                self.gap.genome_len[slot] = int(n)
+                self.gap.genome_weight[slot] = 1.0
+            self.gap.ifs_fragment[slot] = np.asarray(token.ifs, dtype=np.float32)
+            self.gap.ifs_weight[slot] = 1.0
+            self.gap._store_capsule(slot, token, lineage_depth=0)
+            self.token_anchor_slot[int(token.token_id)] = int(slot)
+
+    def _token_from_gap_slot(self, slot: int) -> SuperToken:
+        s = int(slot)
+        parent_a = int(self.gap.capsule_parent_a[s])
+        parent_b = int(self.gap.capsule_parent_b[s])
+        n = int(self.gap.capsule_identity_len[s])
+        ident = np.asarray(
+            self.gap.capsule_identity[s, : max(n, 0)], dtype=np.int32
+        ).copy()
+        if ident.size <= 0:
+            ident = np.asarray([32], dtype=np.int32)
+        if parent_a < 0 and parent_b < 0:
+            if ident.size >= 2:
+                ident = ident[:2]
+            elif ident.size == 1:
+                vmax = self._identity_symbol_max()
+                ident = np.asarray(
+                    [int(ident[0]), int(self.rng.integers(0, vmax + 1))], dtype=np.int32
+                )
+            else:
+                ident = self._sample_identity_bytes_from_world(2)
+        traits = np.asarray(self.gap.capsule_traits[s], dtype=np.float32)
+        return SuperToken(
+            token_id=int(self.gap.capsule_token_id[s]),
+            parent_a=parent_a,
+            parent_b=parent_b,
+            energy=float(np.clip(self.gap.energy[s], 0.0, self.cfg.token_energy_cap)),
+            inactivity_steps=int(self.gap.capsule_inactivity_steps[s]),
+            state_vec=np.asarray(
+                self.gap.capsule_state_vec[s], dtype=np.float32
+            ).copy(),
+            signature=np.asarray(
+                self.gap.capsule_signature[s], dtype=np.float32
+            ).copy(),
+            proposal_drift=np.asarray(
+                self.gap.capsule_proposal_drift[s], dtype=np.float32
+            ).copy(),
+            ifs=np.asarray(self.gap.capsule_ifs[s], dtype=np.float32).copy(),
+            phase=float(self.gap.phase[s]),
+            omega=float(self.gap.omega[s]),
+            activation_threshold=float(traits[0]),
+            emission_amplitude=float(traits[1]),
+            emission_decay=float(traits[2]),
+            silence_growth_rate=float(traits[3]),
+            resonance_width=float(traits[4]),
+            phase_coupling=float(traits[5]),
+            velocity_coupling=float(traits[6]),
+            proposal_length_bias=float(traits[7]),
+            identity_bytes=ident,
+            birth_step=int(self.gap.capsule_birth_step[s]),
+            low_energy_steps=int(self.gap.capsule_low_energy_steps[s]),
+            max_paid_bet=float(self.gap.capsule_max_paid_bet[s]),
+            max_silent_correct=int(self.gap.capsule_max_silent_correct[s]),
+        )
+
+    def _sync_super_tokens_from_gap(self) -> None:
+        live = self.gap.live_capsule_slots(
+            min_energy=max(self.cfg.min_viable_energy * 0.25, 1e-12)
+        )
+        chosen: dict[int, int] = {}
+        for slot in live.tolist():
+            tid = int(self.gap.capsule_token_id[int(slot)])
+            if tid < 0:
+                continue
+            prev = chosen.get(tid)
+            if prev is None:
+                chosen[tid] = int(slot)
+                continue
+            prev_key = (
+                int(self.gap.step_idx[prev]),
+                float(self.gap.energy[prev]),
+            )
+            cur_key = (
+                int(self.gap.step_idx[int(slot)]),
+                float(self.gap.energy[int(slot)]),
+            )
+            if cur_key > prev_key:
+                chosen[tid] = int(slot)
+
+        self.super_tokens = {}
+        self.token_anchor_slot = {}
+        for tid, slot in chosen.items():
+            tok = self._token_from_gap_slot(int(slot))
+            self.super_tokens[int(tid)] = tok
+            self.token_anchor_slot[int(tid)] = int(slot)
+            if int(tid) not in self.lineage_depth:
+                d = int(self.gap.capsule_lineage_depth[int(slot)])
+                self.lineage_depth[int(tid)] = max(d, 0)
+        # Slots that reference stale duplicate token ids are cleared to preserve one-capsule-per-id.
+        keep_slots = set(int(s) for s in self.token_anchor_slot.values())
+        for slot in live.tolist():
+            s = int(slot)
+            tid = int(self.gap.capsule_token_id[s])
+            if tid < 0:
+                continue
+            if s not in keep_slots:
+                self.gap.clear_slot(s)
+
+    def _refresh_capsule_slot(
+        self, token: SuperToken, slot: int, read_strength: float = 0.0
+    ) -> None:
+        s = int(slot)
+        if s < 0 or s >= int(self.cfg.gap_len):
+            return
+        self.gap.energy[s] = float(
+            np.clip(token.energy, 0.0, self.cfg.token_energy_cap)
+        )
+        self.gap.phase[s] = float(token.phase)
+        self.gap.omega[s] = float(token.omega)
+        self.gap.emitter_id[s] = int(token.token_id)
+        self.gap.step_idx[s] = int(self.step_idx)
+        self.gap.genome_fragment[s].fill(-1)
+        ident = np.asarray(token.identity_bytes, dtype=np.int32).reshape(-1)
+        n = min(int(ident.size), int(self.gap.genome_fragment.shape[1]))
+        if n > 0:
+            vmax = self._identity_symbol_max()
+            self.gap.genome_fragment[s, :n] = np.clip(ident[:n], 0, vmax).astype(
+                np.int32, copy=False
+            )
+            self.gap.genome_len[s] = int(n)
+            self.gap.genome_weight[s] = float(max(read_strength, 1e-3))
+        else:
+            self.gap.genome_len[s] = 0
+            self.gap.genome_weight[s] = 0.0
+        self.gap.ifs_fragment[s] = np.asarray(token.ifs, dtype=np.float32)
+        self.gap.ifs_weight[s] = float(max(read_strength, 1e-3))
+        depth = int(self.lineage_depth.get(int(token.token_id), 0))
+        self.gap._store_capsule(s, token, lineage_depth=depth)
+
+    def _write_capsule_emission(
+        self,
+        token: SuperToken,
+        point: np.ndarray,
+        velocity: np.ndarray,
+        energy: float,
+        read_strength: float,
+        round_idx: int,
+    ) -> int:
+        old_slot = self.token_anchor_slot.get(int(token.token_id), -1)
+        write_slot = int(self.gap.ptr)
+        self.gap.write(
+            point=point,
+            velocity=velocity,
+            phase=float(token.phase),
+            omega=float(token.omega),
+            energy=float(np.clip(energy, 0.0, self.cfg.token_energy_cap)),
+            genome_fragment=token.identity_bytes,
+            genome_weight=read_strength,
+            ifs_fragment=token.ifs,
+            ifs_weight=read_strength,
+            emitter_id=int(token.token_id),
+            step_idx=self.step_idx,
+            round_idx=round_idx,
+            capsule_token=token,
+            lineage_depth=int(self.lineage_depth.get(int(token.token_id), 0)),
+        )
+        self.token_anchor_slot[int(token.token_id)] = int(write_slot)
+        if (
+            int(old_slot) >= 0
+            and int(old_slot) != int(write_slot)
+            and int(self.gap.capsule_token_id[int(old_slot)]) == int(token.token_id)
+        ):
+            self.gap.clear_slot(int(old_slot))
+        return int(write_slot)
+
+    def _frontier_local_slots(self) -> np.ndarray:
+        n = int(self.cfg.gap_len)
+        if n <= 0:
+            return np.zeros((0,), dtype=np.int32)
+        win = int(np.clip(self.cfg.capsule_frontier_window, 1, n))
+        if win >= n:
+            return np.arange(n, dtype=np.int32)
+        center = int(self.world.cursor % n)
+        half = int(win // 2)
+        offsets = np.arange(-half, -half + win, dtype=np.int32)
+        return ((center + offsets) % n).astype(np.int32, copy=False)
+
+    def _local_live_token_ids(self) -> list[int]:
+        local = self._frontier_local_slots()
+        if local.size == 0:
+            return []
+        local_set = set(int(x) for x in local.tolist())
+        out: list[int] = []
+        for tid, slot in self.token_anchor_slot.items():
+            if int(slot) not in local_set:
+                continue
+            tok = self.super_tokens.get(int(tid))
+            if tok is None:
+                continue
+            if float(tok.energy) <= float(self.cfg.min_viable_energy):
+                continue
+            out.append(int(tid))
+        return out
 
     def _identity_symbol_max(self) -> int:
         if self.cfg.token_space == "byte_parity":
             return 255
         return max(int(self.base_vocab_size) - 1, 0)
 
-    def _sample_gap_genome_fragment(self, preferred_emitters: set[int] | None = None) -> np.ndarray | None:
+    def _sample_gap_genome_fragment(
+        self, preferred_emitters: set[int] | None = None
+    ) -> np.ndarray | None:
         lens = np.asarray(self.gap.genome_len, dtype=np.int32)
         valid = lens > 0
         if not np.any(valid):
@@ -1358,9 +1769,8 @@ class EmeraEngine:
         idx = np.where(valid)[0]
         if idx.size == 0:
             return None
-        w = (
-            np.asarray(self.gap.energy[idx], dtype=np.float64)
-            * np.maximum(np.asarray(self.gap.genome_weight[idx], dtype=np.float64), 1e-6)
+        w = np.asarray(self.gap.energy[idx], dtype=np.float64) * np.maximum(
+            np.asarray(self.gap.genome_weight[idx], dtype=np.float64), 1e-6
         )
         w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
         sw = float(np.sum(w))
@@ -1377,8 +1787,14 @@ class EmeraEngine:
         frag = np.asarray(self.gap.genome_fragment[slot, :n], dtype=np.int32)
         return np.clip(frag, 0, vmax).astype(np.int32, copy=True)
 
-    def _mix_gap_genome_fragments(self, fragments: list[np.ndarray]) -> np.ndarray | None:
-        seq = [np.asarray(f, dtype=np.int32).reshape(-1) for f in fragments if np.asarray(f).size > 0]
+    def _mix_gap_genome_fragments(
+        self, fragments: list[np.ndarray]
+    ) -> np.ndarray | None:
+        seq = [
+            np.asarray(f, dtype=np.int32).reshape(-1)
+            for f in fragments
+            if np.asarray(f).size > 0
+        ]
         if not seq:
             return None
         max_len = max(int(self.cfg.proposal_lmax), 1)
@@ -1415,12 +1831,20 @@ class EmeraEngine:
             out = out.copy()
             out[k] = int(self.rng.integers(0, vmax + 1))
         if out.size < max_len and self.rng.random() < 0.08:
-            out = np.concatenate([out, np.asarray([int(self.rng.integers(0, vmax + 1))], dtype=np.int32)], axis=0)
+            out = np.concatenate(
+                [
+                    out,
+                    np.asarray([int(self.rng.integers(0, vmax + 1))], dtype=np.int32),
+                ],
+                axis=0,
+            )
         return out[:max_len].astype(np.int32, copy=False)
 
     def _gap_identity_override(self, preferred_emitters: set[int]) -> np.ndarray | None:
         frags: list[np.ndarray] = []
-        primary = self._sample_gap_genome_fragment(preferred_emitters if preferred_emitters else None)
+        primary = self._sample_gap_genome_fragment(
+            preferred_emitters if preferred_emitters else None
+        )
         if primary is not None:
             frags.append(primary)
         if len(preferred_emitters) >= 2:
@@ -1433,7 +1857,9 @@ class EmeraEngine:
                 frags.append(ambient)
         return self._mix_gap_genome_fragments(frags)
 
-    def _sample_gap_ifs_fragment(self, preferred_emitters: set[int] | None = None) -> np.ndarray | None:
+    def _sample_gap_ifs_fragment(
+        self, preferred_emitters: set[int] | None = None
+    ) -> np.ndarray | None:
         w_base = np.asarray(self.gap.ifs_weight, dtype=np.float32)
         valid = w_base > 1e-9
         if not np.any(valid):
@@ -1450,9 +1876,8 @@ class EmeraEngine:
         idx = np.where(valid)[0]
         if idx.size == 0:
             return None
-        w = (
-            np.asarray(self.gap.energy[idx], dtype=np.float64)
-            * np.maximum(np.asarray(self.gap.ifs_weight[idx], dtype=np.float64), 1e-6)
+        w = np.asarray(self.gap.energy[idx], dtype=np.float64) * np.maximum(
+            np.asarray(self.gap.ifs_weight[idx], dtype=np.float64), 1e-6
         )
         w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
         sw = float(np.sum(w))
@@ -1465,7 +1890,11 @@ class EmeraEngine:
         return np.asarray(self.gap.ifs_fragment[slot], dtype=np.float32).copy()
 
     def _mix_gap_ifs_fragments(self, fragments: list[np.ndarray]) -> np.ndarray | None:
-        seq = [np.asarray(f, dtype=np.float32).reshape(int(self.cfg.num_ifs), 2, 3) for f in fragments if np.asarray(f).size > 0]
+        seq = [
+            np.asarray(f, dtype=np.float32).reshape(int(self.cfg.num_ifs), 2, 3)
+            for f in fragments
+            if np.asarray(f).size > 0
+        ]
         if not seq:
             return None
         if len(seq) == 1:
@@ -1481,7 +1910,9 @@ class EmeraEngine:
                 choose_b = self.rng.random((int(self.cfg.num_ifs), 1, 1)) < 0.5
                 out = np.where(choose_b, b, a).astype(np.float32)
             else:
-                out = np.mean(np.stack(seq[: min(3, len(seq))], axis=0), axis=0).astype(np.float32)
+                out = np.mean(np.stack(seq[: min(3, len(seq))], axis=0), axis=0).astype(
+                    np.float32
+                )
         out += self.rng.normal(
             0.0,
             float(self.cfg.ifs_mutation_scale) * 0.35,
@@ -1491,7 +1922,9 @@ class EmeraEngine:
 
     def _gap_ifs_override(self, preferred_emitters: set[int]) -> np.ndarray | None:
         frags: list[np.ndarray] = []
-        primary = self._sample_gap_ifs_fragment(preferred_emitters if preferred_emitters else None)
+        primary = self._sample_gap_ifs_fragment(
+            preferred_emitters if preferred_emitters else None
+        )
         if primary is not None:
             frags.append(primary)
         if len(preferred_emitters) >= 2:
@@ -1513,7 +1946,9 @@ class EmeraEngine:
     def _identity_tokens_at_cursor(self, identity_bytes: np.ndarray) -> np.ndarray:
         return self._identity_suffix_tokens_at_cursor(identity_bytes, offset=0)
 
-    def _identity_suffix_tokens_at_cursor(self, identity_bytes: np.ndarray, offset: int) -> np.ndarray:
+    def _identity_suffix_tokens_at_cursor(
+        self, identity_bytes: np.ndarray, offset: int
+    ) -> np.ndarray:
         b = np.asarray(identity_bytes, dtype=np.int32).reshape(-1)
         if b.size == 0:
             return np.zeros((0,), dtype=np.int32)
@@ -1521,7 +1956,9 @@ class EmeraEngine:
         if self.cfg.token_space == "byte_parity":
             suffix = np.clip(b[start:], 0, 255).astype(np.int32)
         else:
-            suffix = np.clip(b[start:], 0, max(self.base_vocab_size - 1, 0)).astype(np.int32)
+            suffix = np.clip(b[start:], 0, max(self.base_vocab_size - 1, 0)).astype(
+                np.int32
+            )
         if suffix.size == 0:
             return np.zeros((0,), dtype=np.int32)
         if self.cfg.token_space == "byte_parity":
@@ -1539,12 +1976,16 @@ class EmeraEngine:
             frontier_byte = int(self.world.peek(1)[0]) & 0xFF
             return np.where(np.clip(b, 0, 255) == frontier_byte)[0].astype(np.int32)
         frontier_tid = int(np.clip(self.world.peek(1)[0], 0, self.base_vocab_size - 1))
-        return np.where(np.clip(b, 0, self.base_vocab_size - 1) == frontier_tid)[0].astype(np.int32)
+        return np.where(np.clip(b, 0, self.base_vocab_size - 1) == frontier_tid)[
+            0
+        ].astype(np.int32)
 
     def _identity_contains_frontier_byte(self, identity_bytes: np.ndarray) -> bool:
         return bool(self._identity_frontier_offsets(identity_bytes).size > 0)
 
-    def _best_identity_alignment(self, identity_bytes: np.ndarray) -> tuple[np.ndarray, int, float, bool]:
+    def _best_identity_alignment(
+        self, identity_bytes: np.ndarray
+    ) -> tuple[np.ndarray, int, float, bool]:
         offsets = self._identity_frontier_offsets(identity_bytes)
         if offsets.size == 0:
             return np.zeros((0,), dtype=np.int32), 0, 0.0, False
@@ -1553,7 +1994,9 @@ class EmeraEngine:
         best_m = 0
         best_direct = 0.0
         for off in offsets.tolist():
-            ids = self._identity_suffix_tokens_at_cursor(identity_bytes, offset=int(off))
+            ids = self._identity_suffix_tokens_at_cursor(
+                identity_bytes, offset=int(off)
+            )
             if ids.size == 0:
                 continue
             m = int(self.world.match_prefix_len(ids.tolist()))
@@ -1574,7 +2017,9 @@ class EmeraEngine:
             return 0.0
         return float(direct)
 
-    def _decode_from_identity(self, identity_bytes: np.ndarray, resonance_strength: float) -> tuple[np.ndarray, float, float]:
+    def _decode_from_identity(
+        self, identity_bytes: np.ndarray, resonance_strength: float
+    ) -> tuple[np.ndarray, float, float]:
         ids, m, direct, found = self._best_identity_alignment(identity_bytes)
         if ids.size == 0 or not found:
             # Fallback for contrastive probes: decode full identity from offset 0 even
@@ -1588,7 +2033,9 @@ class EmeraEngine:
         else:
             frontier_match = 1.0
         rs = float(np.clip(resonance_strength, 0.0, 1.0))
-        conf = float(np.clip(0.05 + 0.80 * direct + 0.10 * frontier_match + 0.05 * rs, 0.0, 1.0))
+        conf = float(
+            np.clip(0.05 + 0.80 * direct + 0.10 * frontier_match + 0.05 * rs, 0.0, 1.0)
+        )
         if m == int(ids.size):
             conf = max(conf, 0.90)
         quality = float(np.clip(conf * (0.35 + 0.65 * direct), 0.0, 1.5))
@@ -1628,12 +2075,57 @@ class EmeraEngine:
         )
 
     def _total_energy(self) -> float:
-        tok = 0.0
-        for t in self.super_tokens.values():
-            if np.isfinite(t.energy):
-                tok += max(float(t.energy), 0.0)
         gap_e = float(np.sum(np.clip(self.gap.energy, 0.0, None)))
-        return float(tok + self.energy_reservoir + gap_e)
+        return float(self.energy_reservoir + gap_e)
+
+    def _register_lineage_depth(self, token: SuperToken) -> None:
+        pa = int(token.parent_a)
+        pb = int(token.parent_b)
+        if pa < 0 and pb < 0:
+            depth = 0
+        else:
+            da = int(self.lineage_depth.get(pa, 0)) if pa >= 0 else 0
+            db = int(self.lineage_depth.get(pb, 0)) if pb >= 0 else 0
+            depth = 1 + max(da, db)
+        self.lineage_depth[int(token.token_id)] = int(depth)
+        if depth > self.max_symbio_depth_ever:
+            self.max_symbio_depth_ever = int(depth)
+
+    def _lineage_metrics(self) -> tuple[int, float]:
+        n = len(self.super_tokens)
+        if n <= 0:
+            return 0, 1.0
+        max_depth = 0
+        roots = 0
+        for tid, tok in self.super_tokens.items():
+            depth = int(self.lineage_depth.get(int(tid), 0))
+            if depth <= 0 and int(tok.parent_a) >= 0:
+                depth = 1
+            if depth > max_depth:
+                max_depth = depth
+            if depth <= 0:
+                roots += 1
+        return int(max_depth), float(roots) / float(n)
+
+    def _gap_compression_ratio(self) -> float:
+        active = np.asarray(self.gap.energy > 1e-9)
+        if not np.any(active):
+            return 1.0
+        lens = np.asarray(self.gap.genome_len[active], dtype=np.int32)
+        frags = np.asarray(self.gap.genome_fragment[active], dtype=np.int32)
+        seq: list[np.ndarray] = []
+        for row, n in zip(frags, lens):
+            k = int(n)
+            if k <= 0:
+                continue
+            seq.append(np.clip(row[:k], 0, 65535).astype(np.uint16, copy=False))
+        if not seq:
+            return 1.0
+        raw = np.concatenate(seq, axis=0).tobytes()
+        if len(raw) <= 0:
+            return 1.0
+        comp = zlib.compress(raw, level=9)
+        return float(len(comp)) / float(max(len(raw), 1))
 
     def _reservoir_add(self, amount: float) -> None:
         if not self.cfg.strict_energy_budget:
@@ -1684,15 +2176,23 @@ class EmeraEngine:
         token.energy += paid
         return float(paid)
 
-    def _update_law_emas(self, match_flag: float, proposal_pressure: float, births: int, deaths: int) -> None:
+    def _update_law_emas(
+        self, match_flag: float, proposal_pressure: float, births: int, deaths: int
+    ) -> None:
         d = float(np.clip(self.cfg.adaptation_ema_decay, 0.0, 0.9999))
         one = 1.0 - d
         active = float(max(len(self.super_tokens), 1))
         birth_rate = float(births) / active
         death_rate = float(deaths) / active
-        self.law_ema["active"] = d * self.law_ema["active"] + one * float(len(self.super_tokens))
-        self.law_ema["match_rate"] = d * self.law_ema["match_rate"] + one * float(match_flag)
-        self.law_ema["proposal_pressure"] = d * self.law_ema["proposal_pressure"] + one * float(proposal_pressure)
+        self.law_ema["active"] = d * self.law_ema["active"] + one * float(
+            len(self.super_tokens)
+        )
+        self.law_ema["match_rate"] = d * self.law_ema["match_rate"] + one * float(
+            match_flag
+        )
+        self.law_ema["proposal_pressure"] = d * self.law_ema[
+            "proposal_pressure"
+        ] + one * float(proposal_pressure)
         self.law_ema["birth_rate"] = d * self.law_ema["birth_rate"] + one * birth_rate
         self.law_ema["death_rate"] = d * self.law_ema["death_rate"] + one * death_rate
 
@@ -1710,21 +2210,40 @@ class EmeraEngine:
         tgt_active = max(float(self.cfg.target_active_super), 1.0)
         raw_err_active = (tgt_active - ema["active"]) / tgt_active
         raw_err_match = float(self.cfg.target_match_rate) - ema["match_rate"]
-        raw_err_pressure = ema["proposal_pressure"] - float(self.cfg.target_proposal_pressure)
-        raw_imbalance = (ema["death_rate"] - ema["birth_rate"]) - float(self.cfg.target_birth_death_gap)
-        raw_collapse_drive = 0.7 * raw_err_active + 0.6 * raw_err_match + 0.4 * raw_imbalance
+        raw_err_pressure = ema["proposal_pressure"] - float(
+            self.cfg.target_proposal_pressure
+        )
+        raw_imbalance = (ema["death_rate"] - ema["birth_rate"]) - float(
+            self.cfg.target_birth_death_gap
+        )
+        raw_collapse_drive = (
+            0.7 * raw_err_active + 0.6 * raw_err_match + 0.4 * raw_imbalance
+        )
         raw_overfire = max(raw_err_pressure, 0.0)
         raw_underfire = max(-raw_err_pressure, 0.0)
 
         # Low-pass filter adaptation signals so law updates stay responsive but less jumpy.
         signal_decay = float(np.clip(self.cfg.adaptation_signal_decay, 0.0, 0.9999))
         one = 1.0 - signal_decay
-        self.law_drive_ema["err_active"] = signal_decay * self.law_drive_ema["err_active"] + one * raw_err_active
-        self.law_drive_ema["err_match"] = signal_decay * self.law_drive_ema["err_match"] + one * raw_err_match
-        self.law_drive_ema["imbalance"] = signal_decay * self.law_drive_ema["imbalance"] + one * raw_imbalance
-        self.law_drive_ema["collapse_drive"] = signal_decay * self.law_drive_ema["collapse_drive"] + one * raw_collapse_drive
-        self.law_drive_ema["overfire"] = signal_decay * self.law_drive_ema["overfire"] + one * raw_overfire
-        self.law_drive_ema["underfire"] = signal_decay * self.law_drive_ema["underfire"] + one * raw_underfire
+        self.law_drive_ema["err_active"] = (
+            signal_decay * self.law_drive_ema["err_active"] + one * raw_err_active
+        )
+        self.law_drive_ema["err_match"] = (
+            signal_decay * self.law_drive_ema["err_match"] + one * raw_err_match
+        )
+        self.law_drive_ema["imbalance"] = (
+            signal_decay * self.law_drive_ema["imbalance"] + one * raw_imbalance
+        )
+        self.law_drive_ema["collapse_drive"] = (
+            signal_decay * self.law_drive_ema["collapse_drive"]
+            + one * raw_collapse_drive
+        )
+        self.law_drive_ema["overfire"] = (
+            signal_decay * self.law_drive_ema["overfire"] + one * raw_overfire
+        )
+        self.law_drive_ema["underfire"] = (
+            signal_decay * self.law_drive_ema["underfire"] + one * raw_underfire
+        )
 
         err_active = float(self.law_drive_ema["err_active"])
         err_match = float(self.law_drive_ema["err_match"])
@@ -1762,14 +2281,32 @@ class EmeraEngine:
                 self.cfg.silence_exp_min,
                 self.cfg.silence_exp_max,
             )
-        upd_mul("ambient_dissipation", 0.5 * overfire - 0.8 * collapse_drive, self.cfg.ambient_dissipation_min, self.cfg.ambient_dissipation_max)
-        upd_mul("spawn_cost", -0.8 * imbalance - 0.4 * collapse_drive, self.cfg.spawn_cost_min, self.cfg.spawn_cost_max)
+        upd_mul(
+            "ambient_dissipation",
+            0.5 * overfire - 0.8 * collapse_drive,
+            self.cfg.ambient_dissipation_min,
+            self.cfg.ambient_dissipation_max,
+        )
+        upd_mul(
+            "spawn_cost",
+            -0.8 * imbalance - 0.4 * collapse_drive,
+            self.cfg.spawn_cost_min,
+            self.cfg.spawn_cost_max,
+        )
 
-        mint_delta = float(self.laws["mint_delta"]) + lr * (-0.25 * collapse_drive - 0.15 * imbalance)
-        self.laws["mint_delta"] = float(np.clip(mint_delta, self.cfg.mint_delta_min, self.cfg.mint_delta_max))
+        mint_delta = float(self.laws["mint_delta"]) + lr * (
+            -0.25 * collapse_drive - 0.15 * imbalance
+        )
+        self.laws["mint_delta"] = float(
+            np.clip(mint_delta, self.cfg.mint_delta_min, self.cfg.mint_delta_max)
+        )
 
-        pareto_alpha = float(self.laws["pareto_alpha"]) - lr * (imbalance + 0.4 * err_active + 0.25 * err_match)
-        self.laws["pareto_alpha"] = float(np.clip(pareto_alpha, self.cfg.pareto_alpha_min, self.cfg.pareto_alpha_max))
+        pareto_alpha = float(self.laws["pareto_alpha"]) - lr * (
+            imbalance + 0.4 * err_active + 0.25 * err_match
+        )
+        self.laws["pareto_alpha"] = float(
+            np.clip(pareto_alpha, self.cfg.pareto_alpha_min, self.cfg.pareto_alpha_max)
+        )
 
         season_note, seasonal_births = self._apply_seasonal_forcing()
         law_text = (
@@ -1787,28 +2324,70 @@ class EmeraEngine:
             law_text = f"{law_text} | {season_note}"
         return law_text, seasonal_births
 
-    def _spawn_spores(self, count: int) -> int:
-        born = 0
-        for _ in range(max(0, int(count))):
-            e = self._reservoir_take(self.cfg.season_revival_energy)
-            if e <= 1e-8:
+    def _seasonal_energy_boost(self, count: int, renewal: float) -> int:
+        if count <= 0:
+            return 0
+        live_slots = self.gap.live_capsule_slots(min_energy=0.0)
+        if live_slots.size <= 0:
+            return 0
+        local = set(int(x) for x in self._frontier_local_slots().tolist())
+        candidates = [int(s) for s in live_slots.tolist() if int(s) in local]
+        if not candidates:
+            candidates = [int(s) for s in live_slots.tolist()]
+        ranked = sorted(
+            candidates,
+            key=lambda s: (
+                float(self.gap.energy[s]),
+                int(self.gap.capsule_inactivity_steps[s]),
+                int(self.gap.step_idx[s]),
+            ),
+        )
+        boosts = 0
+        for slot in ranked:
+            if boosts >= int(count):
                 break
-            tid = self.next_token_id
-            token = make_initial_super_token(self.cfg, self.rng, tid, birth_step=self.step_idx)
-            token.energy = float(min(e, self.cfg.token_energy_cap))
-            self.super_tokens[tid] = token
-            self.next_token_id += 1
-            born += 1
-        return born
+            paid = self._reservoir_take(float(self.cfg.season_revival_energy))
+            if paid <= 1e-8:
+                break
+            self.gap.energy[slot] = float(
+                np.clip(
+                    float(self.gap.energy[slot]) + paid, 0.0, self.cfg.token_energy_cap
+                )
+            )
+            jitter_scale = float(self.cfg.season_topology_jitter) * (
+                0.3 + 0.7 * float(renewal)
+            )
+            if jitter_scale > 0.0:
+                self.gap.velocity[slot] = np.tanh(
+                    np.asarray(self.gap.velocity[slot], dtype=np.float32)
+                    + self.rng.normal(
+                        0.0, jitter_scale, size=(self.cfg.gap_dim,)
+                    ).astype(np.float32)
+                ).astype(np.float32)
+                self.gap.points[slot] = np.tanh(
+                    np.asarray(self.gap.points[slot], dtype=np.float32)
+                    + 0.5 * np.asarray(self.gap.velocity[slot], dtype=np.float32)
+                ).astype(np.float32)
+            boosts += 1
+        return int(boosts)
 
     def _apply_seasonal_forcing(self) -> tuple[str, int]:
         if not self.cfg.seasons_enabled:
             return "", 0
 
-        phase = 2.0 * np.pi * (float(self.step_idx % self.cfg.season_period) / float(self.cfg.season_period))
+        phase = (
+            2.0
+            * np.pi
+            * (
+                float(self.step_idx % self.cfg.season_period)
+                / float(self.cfg.season_period)
+            )
+        )
         raw_wave = float(np.sin(phase))
         season_decay = float(np.clip(self.cfg.season_wave_decay, 0.0, 0.9999))
-        self.season_wave_ema = season_decay * self.season_wave_ema + (1.0 - season_decay) * raw_wave
+        self.season_wave_ema = (
+            season_decay * self.season_wave_ema + (1.0 - season_decay) * raw_wave
+        )
         wave = float(np.clip(self.season_wave_ema, -1.0, 1.0))
         renewal = max(wave, 0.0)
         austerity = max(-wave, 0.0)
@@ -1818,27 +2397,48 @@ class EmeraEngine:
             val = float(self.laws[key]) * float(np.exp(s * drive))
             self.laws[key] = float(np.clip(val, lo, hi))
 
-        upd_mul("attempt_cost_base", 0.50 * austerity - 0.50 * renewal, self.cfg.attempt_cost_min, self.cfg.attempt_cost_max)
-        upd_mul("jackpot_base", 0.60 * renewal - 0.20 * austerity, self.cfg.jackpot_base_min, self.cfg.jackpot_base_max)
-        upd_mul("ambient_dissipation", 0.55 * austerity - 0.35 * renewal, self.cfg.ambient_dissipation_min, self.cfg.ambient_dissipation_max)
-        upd_mul("spawn_cost", 0.65 * austerity - 0.85 * renewal, self.cfg.spawn_cost_min, self.cfg.spawn_cost_max)
+        upd_mul(
+            "attempt_cost_base",
+            0.50 * austerity - 0.50 * renewal,
+            self.cfg.attempt_cost_min,
+            self.cfg.attempt_cost_max,
+        )
+        upd_mul(
+            "jackpot_base",
+            0.60 * renewal - 0.20 * austerity,
+            self.cfg.jackpot_base_min,
+            self.cfg.jackpot_base_max,
+        )
+        upd_mul(
+            "ambient_dissipation",
+            0.55 * austerity - 0.35 * renewal,
+            self.cfg.ambient_dissipation_min,
+            self.cfg.ambient_dissipation_max,
+        )
+        upd_mul(
+            "spawn_cost",
+            0.65 * austerity - 0.85 * renewal,
+            self.cfg.spawn_cost_min,
+            self.cfg.spawn_cost_max,
+        )
 
-        mint_delta = float(self.laws["mint_delta"]) + s * (0.030 * austerity - 0.040 * renewal)
-        self.laws["mint_delta"] = float(np.clip(mint_delta, self.cfg.mint_delta_min, self.cfg.mint_delta_max))
+        mint_delta = float(self.laws["mint_delta"]) + s * (
+            0.030 * austerity - 0.040 * renewal
+        )
+        self.laws["mint_delta"] = float(
+            np.clip(mint_delta, self.cfg.mint_delta_min, self.cfg.mint_delta_max)
+        )
 
-        spores_born = 0
-        if renewal > 0.35 and self.cfg.season_revival_spores > 0:
-            target_active = max(int(round(float(self.cfg.target_active_super))), 1)
-            active_now = int(len(self.super_tokens))
-            deficit = max(target_active - active_now, 0)
-            if deficit > 0:
-                wave_scale = 0.5 + 1.5 * renewal
-                pulse = int(np.ceil(float(self.cfg.season_revival_spores) * wave_scale))
-                quota = int(max(1, min(deficit, pulse)))
-                spores_born = self._spawn_spores(quota)
+        boosts = 0
+        if renewal > 0.20 and self.cfg.season_revival_spores > 0:
+            wave_scale = 0.4 + 1.6 * renewal
+            quota = int(
+                max(1, np.ceil(float(self.cfg.season_revival_spores) * wave_scale))
+            )
+            boosts = self._seasonal_energy_boost(quota, renewal)
 
-        if spores_born > 0:
-            return f"season wave={wave:+.2f} renewal spores={spores_born}", spores_born
+        if boosts > 0:
+            return f"season wave={wave:+.2f} renewal_boosts={boosts}", 0
         return f"season wave={wave:+.2f}", 0
 
     def _decode_from_state(
@@ -1867,13 +2467,19 @@ class EmeraEngine:
             ids[k] = int(self.decode_token_ids[i1])
             confs[k] = float(conf)
         confidence = float(np.mean(confs))
-        quality = float(confidence * (0.5 + 0.5 * np.clip(resonance_strength, 0.0, 1.0)))
+        quality = float(
+            confidence * (0.5 + 0.5 * np.clip(resonance_strength, 0.0, 1.0))
+        )
         return ids, confidence, quality
 
-    def _raw_decode_for_token(self, token: SuperToken, resonance_strength: float) -> tuple[np.ndarray, float, float]:
+    def _raw_decode_for_token(
+        self, token: SuperToken, resonance_strength: float
+    ) -> tuple[np.ndarray, float, float]:
         return self._decode_from_identity(token.identity_bytes, resonance_strength)
 
-    def _proposal_for_token(self, token: SuperToken, resonance_strength: float) -> Optional[Proposal]:
+    def _proposal_for_token(
+        self, token: SuperToken, resonance_strength: float
+    ) -> Optional[Proposal]:
         ids, conf, quality = self._raw_decode_for_token(token, resonance_strength)
         if ids.size <= 0:
             return None
@@ -1901,7 +2507,8 @@ class EmeraEngine:
         if conf < token.activation_threshold:
             return None
         pressure_deficit = max(
-            float(self.cfg.target_proposal_pressure) - float(self.law_ema["proposal_pressure"]),
+            float(self.cfg.target_proposal_pressure)
+            - float(self.law_ema["proposal_pressure"]),
             0.0,
         )
         explore_prob = float(np.clip(0.05 + 0.45 * pressure_deficit, 0.05, 0.55))
@@ -1922,14 +2529,22 @@ class EmeraEngine:
         cap = float(self.cfg.proposal_bet_max_energy_frac) * energy
         if cap <= 0.0:
             return 0.0
-        x = float(self.cfg.proposal_bet_conf_gain) * (float(confidence) - float(token.activation_threshold))
+        x = float(self.cfg.proposal_bet_conf_gain) * (
+            float(confidence) - float(token.activation_threshold)
+        )
         risk = 1.0 / (1.0 + np.exp(-np.clip(x, -40.0, 40.0)))
         floor = float(np.clip(self.cfg.proposal_bet_floor_frac, 0.0, 1.0))
-        target = unit * float(self.cfg.proposal_bet_unit_scale) * (floor + (1.0 - floor) * float(risk))
+        target = (
+            unit
+            * float(self.cfg.proposal_bet_unit_scale)
+            * (floor + (1.0 - floor) * float(risk))
+        )
         target = max(target, float(self.cfg.proposal_min_bet))
         return float(min(target, cap))
 
-    def _gate_proposals_to_frontier(self, proposals: list[Proposal]) -> tuple[list[Proposal], int, int]:
+    def _gate_proposals_to_frontier(
+        self, proposals: list[Proposal]
+    ) -> tuple[list[Proposal], int, int]:
         if not proposals:
             return [], 0, 0
 
@@ -1945,12 +2560,29 @@ class EmeraEngine:
         if frontier_props:
             n = min(len(other_props), int(self.cfg.proposal_frontier_contrast))
             if n > 0:
-                idx = np.asarray(self.rng.choice(len(other_props), size=n, replace=False), dtype=np.int64)
+                idx = np.asarray(
+                    self.rng.choice(len(other_props), size=n, replace=False),
+                    dtype=np.int64,
+                )
                 sampled = [other_props[int(i)] for i in idx.tolist()]
             else:
                 sampled = []
             gated = frontier_props + sampled
             return gated, len(frontier_props), len(gated)
+
+        n_fallback = min(len(other_props), int(self.cfg.proposal_frontier_fallback))
+        if n_fallback > 0:
+            ranked = sorted(
+                other_props,
+                key=lambda p: (
+                    float(p.confidence),
+                    float(p.expected_return),
+                    int(p.token_id),
+                ),
+                reverse=True,
+            )
+            gated = ranked[:n_fallback]
+            return gated, 0, len(gated)
 
         return [], 0, 0
 
@@ -1960,7 +2592,7 @@ class EmeraEngine:
             return None
 
         tid = self.next_token_id
-        l = int(self.rng.integers(1, self.cfg.proposal_lmax + 1))
+        l = 2
         ident = self.world.peek(l).astype(np.int32)
         if self.cfg.token_space == "byte_parity":
             ident = (ident & 0xFF).astype(np.int32)
@@ -1971,11 +2603,19 @@ class EmeraEngine:
             birth_step=self.step_idx,
             identity_bytes=ident,
         )
-        target = self.base_latent[int(np.clip(frontier_tid, 0, self.base_latent.shape[0] - 1))].astype(np.float32)
-        noise = self.rng.normal(0.0, float(self.cfg.frontier_rescue_noise), size=target.shape).astype(np.float32)
+        target = self.base_latent[
+            int(np.clip(frontier_tid, 0, self.base_latent.shape[0] - 1))
+        ].astype(np.float32)
+        noise = self.rng.normal(
+            0.0, float(self.cfg.frontier_rescue_noise), size=target.shape
+        ).astype(np.float32)
 
-        token.state_vec = _normalize((target + noise).astype(np.float32)).astype(np.float32)
-        token.signature = _normalize(token.state_vec[: self.cfg.gap_dim]).astype(np.float32)
+        token.state_vec = _normalize((target + noise).astype(np.float32)).astype(
+            np.float32
+        )
+        token.signature = _normalize(token.state_vec[: self.cfg.gap_dim]).astype(
+            np.float32
+        )
         token.phase = float(np.arctan2(token.state_vec[1], token.state_vec[0]))
         token.proposal_drift = _normalize(
             0.70 * token.proposal_drift + 0.30 * target
@@ -1984,11 +2624,32 @@ class EmeraEngine:
         token.proposal_length_bias = float(min(token.proposal_length_bias, -0.80))
         token.energy = float(min(e, self.cfg.token_energy_cap))
 
+        self._register_lineage_depth(token)
+        slot = int(self.gap.ptr)
+        self.gap.write(
+            point=np.asarray(token.signature, dtype=np.float32),
+            velocity=np.zeros((self.cfg.gap_dim,), dtype=np.float32),
+            phase=float(token.phase),
+            omega=float(token.omega),
+            energy=float(token.energy),
+            genome_fragment=token.identity_bytes,
+            genome_weight=1.0,
+            ifs_fragment=token.ifs,
+            ifs_weight=1.0,
+            emitter_id=int(token.token_id),
+            step_idx=self.step_idx,
+            round_idx=-1,
+            capsule_token=token,
+            lineage_depth=int(self.lineage_depth.get(int(token.token_id), 0)),
+        )
         self.super_tokens[tid] = token
+        self.token_anchor_slot[int(tid)] = int(slot)
         self.next_token_id += 1
         return token
 
-    def _proposal_for_pair_fusion(self, a: SuperToken, b: SuperToken) -> tuple[np.ndarray, float, float]:
+    def _proposal_for_pair_fusion(
+        self, a: SuperToken, b: SuperToken
+    ) -> tuple[np.ndarray, float, float]:
         rs = 0.5 * (
             self.last_resonance_strength.get(a.token_id, 0.0)
             + self.last_resonance_strength.get(b.token_id, 0.0)
@@ -2001,15 +2662,25 @@ class EmeraEngine:
             ib = np.asarray([32], dtype=np.int32)
         na = max(1, ia.size // 2)
         nb = max(1, ib.size - ib.size // 2)
-        fused = np.concatenate([ia[:na], ib[-nb:]], axis=0)[: max(1, self.cfg.proposal_lmax)]
+        fused = np.concatenate([ia[:na], ib[-nb:]], axis=0)[
+            : max(1, self.cfg.proposal_lmax)
+        ]
         ids_f, conf_f, q_f = self._decode_from_identity(fused, rs)
-        ids_a, conf_a, q_a = self._decode_from_identity(ia, self.last_resonance_strength.get(a.token_id, 0.0))
-        ids_b, conf_b, q_b = self._decode_from_identity(ib, self.last_resonance_strength.get(b.token_id, 0.0))
+        ids_a, conf_a, q_a = self._decode_from_identity(
+            ia, self.last_resonance_strength.get(a.token_id, 0.0)
+        )
+        ids_b, conf_b, q_b = self._decode_from_identity(
+            ib, self.last_resonance_strength.get(b.token_id, 0.0)
+        )
 
         candidates = [(ids_f, conf_f, q_f), (ids_a, conf_a, q_a), (ids_b, conf_b, q_b)]
-        ids, conf, quality = max(candidates, key=lambda x: x[1] if x[0].size > 0 else -1.0)
+        ids, conf, quality = max(
+            candidates, key=lambda x: x[1] if x[0].size > 0 else -1.0
+        )
 
-        align = float(np.clip(np.dot(_normalize(a.state_vec), _normalize(b.state_vec)), 0.0, 1.0))
+        align = float(
+            np.clip(np.dot(_normalize(a.state_vec), _normalize(b.state_vec)), 0.0, 1.0)
+        )
         conf = float(np.clip(conf + 0.18 * align, 0.0, 1.0))
         quality = float(np.clip(quality + 0.22 * align, 0.0, 1.5))
         return ids, conf, quality
@@ -2044,13 +2715,17 @@ class EmeraEngine:
         b = base_toll(adv, self.cfg)
         return realized_return(j, attempt_total, d, b)
 
-    def _proposal_realized_components(self, proposal: Proposal) -> dict[str, float | int]:
+    def _proposal_realized_components(
+        self, proposal: Proposal
+    ) -> dict[str, float | int]:
         p_len = int(proposal.tokens.size)
         if p_len <= 0:
             adv = 1
             disc = discovery_cost(1, self.cfg)
             j = 0.0
-            score = realized_return(j, float(proposal.bet), disc, base_toll(adv, self.cfg))
+            score = realized_return(
+                j, float(proposal.bet), disc, base_toll(adv, self.cfg)
+            )
             return {
                 "match_len": 0,
                 "proposal_len": 0,
@@ -2086,9 +2761,15 @@ class EmeraEngine:
             "score": float(score),
         }
 
-    def _ablation_returns(self, a: SuperToken, b: SuperToken) -> tuple[float, float, float]:
-        ids_a, conf_a, q_a = self._raw_decode_for_token(a, self.last_resonance_strength.get(a.token_id, 0.0))
-        ids_b, conf_b, q_b = self._raw_decode_for_token(b, self.last_resonance_strength.get(b.token_id, 0.0))
+    def _ablation_returns(
+        self, a: SuperToken, b: SuperToken
+    ) -> tuple[float, float, float]:
+        ids_a, conf_a, q_a = self._raw_decode_for_token(
+            a, self.last_resonance_strength.get(a.token_id, 0.0)
+        )
+        ids_b, conf_b, q_b = self._raw_decode_for_token(
+            b, self.last_resonance_strength.get(b.token_id, 0.0)
+        )
         ids_ab, conf_ab, q_ab = self._proposal_for_pair_fusion(a, b)
         r_a = self._evaluate_proposal_return(
             proposal_tokens=ids_a,
@@ -2113,15 +2794,23 @@ class EmeraEngine:
         )
         return r_ab, r_a, r_b
 
-    def _adapt_winner_from_truth(self, winner: SuperToken, gt_tokens: np.ndarray, match_len: int) -> None:
+    def _adapt_winner_from_truth(
+        self, winner: SuperToken, gt_tokens: np.ndarray, match_len: int
+    ) -> None:
         if gt_tokens.size == 0:
             return
         if match_len > 0:
-            target = _normalize(np.mean(self.base_latent[gt_tokens[:match_len]], axis=0))
-            winner.state_vec = _normalize((1.0 - 0.06) * winner.state_vec + 0.06 * target).astype(np.float32)
+            target = _normalize(
+                np.mean(self.base_latent[gt_tokens[:match_len]], axis=0)
+            )
+            winner.state_vec = _normalize(
+                (1.0 - 0.06) * winner.state_vec + 0.06 * target
+            ).astype(np.float32)
         if match_len < gt_tokens.size:
             miss = self.base_latent[int(gt_tokens[match_len])]
-            winner.state_vec = _normalize((1.0 - 0.18) * winner.state_vec + 0.18 * miss).astype(np.float32)
+            winner.state_vec = _normalize(
+                (1.0 - 0.18) * winner.state_vec + 0.18 * miss
+            ).astype(np.float32)
             winner.proposal_drift = _normalize(
                 0.92 * winner.proposal_drift + 0.08 * (miss - winner.state_vec)
             ).astype(np.float32)
@@ -2140,14 +2829,27 @@ class EmeraEngine:
         b = winner.parent_b
         parent_a = self.super_tokens.get(a)
         parent_b = self.super_tokens.get(b)
-        if parent_a is not None and parent_b is not None:
-            winner.energy += self.cfg.child_reward_share * payout
-            parent_a.energy += self.cfg.parent_reward_share * payout
-            parent_b.energy += self.cfg.parent_reward_share * payout
+        if parent_a is None and parent_b is None:
+            winner.energy += payout
             return
-        winner.energy += payout
 
-    def _self_copy_cycle(self, proposal_evals: list[tuple[Proposal, dict[str, float | int]]]) -> tuple[int, list[str]]:
+        paid_to_parents = 0.0
+        parent_share = float(self.cfg.parent_reward_share) * payout
+        if parent_a is not None:
+            parent_a.energy += parent_share
+            paid_to_parents += parent_share
+        if parent_b is not None and parent_b is not parent_a:
+            parent_b.energy += parent_share
+            paid_to_parents += parent_share
+
+        # Preserve full payout accounting: winner gets child share plus any
+        # unclaimed remainder (dead/missing parent or configured residual).
+        winner_base = float(self.cfg.child_reward_share) * payout
+        winner.energy += max(0.0, payout - paid_to_parents - winner_base) + winner_base
+
+    def _self_copy_cycle(
+        self, proposal_evals: list[tuple[Proposal, dict[str, float | int]]]
+    ) -> tuple[int, list[str]]:
         cfg = self.cfg
         if not bool(cfg.self_copy_enabled):
             return 0, []
@@ -2159,6 +2861,8 @@ class EmeraEngine:
             return 0, []
 
         copy_cost = float(cfg.self_copy_cost)
+        parent_contrib_frac = float(np.clip(cfg.self_copy_parent_contrib_frac, 0.0, 1.0))
+        parent_contrib = copy_cost * parent_contrib_frac
         min_energy = float(cfg.self_copy_min_energy)
         min_match_frac = float(cfg.self_copy_min_match_frac)
         min_score = float(cfg.self_copy_min_score)
@@ -2188,13 +2892,16 @@ class EmeraEngine:
             score = float(evals.get("score", 0.0))
             if match_frac < min_match_frac or score < min_score:
                 continue
-            if float(parent.energy) < (min_energy + copy_cost):
+            if float(parent.energy) < (min_energy + parent_contrib):
                 continue
 
-            paid = self._drain_token_energy(parent, copy_cost)
-            if paid <= 1e-8:
+            if parent_contrib > 0.0:
+                paid = self._drain_token_energy(parent, parent_contrib)
+            else:
+                paid = 0.0
+            if parent_contrib > 0.0 and paid <= 1e-8:
                 continue
-            child_energy = self._reservoir_take(paid)
+            child_energy = self._reservoir_take(copy_cost)
             if child_energy <= 1e-8:
                 continue
 
@@ -2211,11 +2918,31 @@ class EmeraEngine:
                 ifs_override=gap_ifs,
                 birth_step=self.step_idx,
             )
+            self._register_lineage_depth(child)
+            child_slot = int(self.gap.ptr)
+            self.gap.write(
+                point=np.asarray(child.signature, dtype=np.float32),
+                velocity=np.zeros((self.cfg.gap_dim,), dtype=np.float32),
+                phase=float(child.phase),
+                omega=float(child.omega),
+                energy=float(np.clip(child.energy, 0.0, self.cfg.token_energy_cap)),
+                genome_fragment=child.identity_bytes,
+                genome_weight=1.0,
+                ifs_fragment=child.ifs,
+                ifs_weight=1.0,
+                emitter_id=int(child.token_id),
+                step_idx=self.step_idx,
+                round_idx=-1,
+                capsule_token=child,
+                lineage_depth=int(self.lineage_depth.get(int(child.token_id), 0)),
+            )
             self.super_tokens[child.token_id] = child
+            self.token_anchor_slot[int(child.token_id)] = int(child_slot)
             self.next_token_id += 1
             births += 1
             events.append(
                 f"copy {child.token_id} <- {parent.token_id} score={score:.3f} match={mlen}/{plen} "
+                f"parent_pay={paid:.3f}/{copy_cost:.3f} "
                 f"gap_genome={1 if gap_ident is not None else 0} glen={int(gap_ident.size) if gap_ident is not None else 0} "
                 f"gap_ifs={1 if gap_ifs is not None else 0}"
             )
@@ -2227,20 +2954,99 @@ class EmeraEngine:
         events: list[str] = []
         spawn_cost = float(self.laws["spawn_cost"])
         mint_delta = float(self.laws["mint_delta"])
-        half_spawn = 0.5 * spawn_cost
-        for a_id, b_id, syn, hits in self.coop.top_pairs(min_hits=1):
+        parent_contrib_frac = float(np.clip(self.cfg.mint_parent_contrib_frac, 0.0, 1.0))
+        half_spawn = 0.5 * spawn_cost * parent_contrib_frac
+        local_slots = self._frontier_local_slots()
+        if local_slots.size <= 0:
+            return births, events
+
+        local_mass: dict[int, float] = {}
+        for slot in local_slots.tolist():
+            s = int(slot)
+            tid = int(self.gap.capsule_token_id[s])
+            if tid < 0:
+                continue
+            tok = self.super_tokens.get(tid)
+            if tok is None:
+                continue
+            mass = float(np.clip(self.gap.energy[s], 0.0, self.cfg.token_energy_cap))
+            mass *= 0.25 + 0.75 * float(np.clip(self.gap.genome_weight[s], 0.0, 1.0))
+            local_mass[tid] = local_mass.get(tid, 0.0) + mass
+        if len(local_mass) < 2:
+            # Fallback to global capsule anchors so minting does not stall when
+            # the frontier neighborhood becomes sparse.
+            for tid, slot in self.token_anchor_slot.items():
+                tok = self.super_tokens.get(int(tid))
+                if tok is None:
+                    continue
+                s = int(slot)
+                if s < 0 or s >= int(self.cfg.gap_len):
+                    continue
+                mass = float(np.clip(self.gap.energy[s], 0.0, self.cfg.token_energy_cap))
+                if mass <= 0.0:
+                    continue
+                mass *= 0.25 + 0.75 * float(np.clip(self.gap.genome_weight[s], 0.0, 1.0))
+                local_mass[int(tid)] = local_mass.get(int(tid), 0.0) + mass
+        if len(local_mass) < 2:
+            return births, events
+
+        ranked = sorted(local_mass.items(), key=lambda kv: kv[1], reverse=True)
+        ranked = ranked[: max(int(self.cfg.capsule_mint_parent_pool), 2)]
+        candidate_ids = [int(tid) for tid, _ in ranked]
+
+        pair_candidates: list[tuple[float, int, int, float]] = []
+        for i in range(len(candidate_ids)):
+            for j in range(i + 1, len(candidate_ids)):
+                a_id = int(candidate_ids[i])
+                b_id = int(candidate_ids[j])
+                substrate = float(
+                    np.log1p(local_mass.get(a_id, 0.0) + local_mass.get(b_id, 0.0))
+                )
+                syn = float(max(self.coop.synergy(a_id, b_id), 0.0))
+                pair_score = substrate + 0.6 * syn
+                pair_candidates.append((pair_score, a_id, b_id, syn))
+        pair_candidates.sort(key=lambda x: x[0], reverse=True)
+        nonroot_live = sum(
+            1
+            for tid in self.super_tokens.keys()
+            if int(self.lineage_depth.get(int(tid), 0)) > 0
+        )
+        collapse_mode = bool(nonroot_live <= 0)
+
+        for _, a_id, b_id, syn in pair_candidates:
+            if births >= 2:
+                break
             a = self.super_tokens.get(a_id)
             b = self.super_tokens.get(b_id)
             if a is None or b is None:
                 continue
-            if a.energy < half_spawn or b.energy < half_spawn:
+            if float(a.energy) < half_spawn or float(b.energy) < half_spawn:
                 continue
             r_ab, r_a, r_b = self._ablation_returns(a, b)
-            if r_ab <= max(r_a, r_b) + mint_delta:
-                continue
+            substrate_boost = 0.05 * float(
+                np.log1p(local_mass.get(a_id, 0.0) + local_mass.get(b_id, 0.0))
+            ) + 0.08 * float(syn)
+            merit = (r_ab + substrate_boost) - (max(r_a, r_b) + mint_delta)
+            exploratory = False
+            if merit <= 0.0:
+                if not collapse_mode:
+                    continue
+                # Lineage rescue: when ecology collapses to roots, allow occasional
+                # exploratory pair births from the strongest local pairs.
+                if births > 0:
+                    continue
+                excite = float(np.log1p(local_mass.get(a_id, 0.0) + local_mass.get(b_id, 0.0)))
+                p_explore = float(np.clip(0.20 + 0.12 * excite + 0.10 * syn, 0.20, 0.55))
+                if self.rng.random() > p_explore:
+                    continue
+                exploratory = True
 
-            self._drain_token_energy(a, half_spawn)
-            self._drain_token_energy(b, half_spawn)
+            if half_spawn > 0.0:
+                paid_a = self._drain_token_energy(a, half_spawn)
+                paid_b = self._drain_token_energy(b, half_spawn)
+            else:
+                paid_a = 0.0
+                paid_b = 0.0
             child_energy = self._reservoir_take(spawn_cost)
             if child_energy <= 1e-8:
                 continue
@@ -2258,11 +3064,32 @@ class EmeraEngine:
                 ifs_override=gap_ifs,
                 birth_step=self.step_idx,
             )
+            child_slot = int(self.gap.ptr)
+            self._register_lineage_depth(child)
+            self.gap.write(
+                point=np.asarray(child.signature, dtype=np.float32),
+                velocity=np.zeros((self.cfg.gap_dim,), dtype=np.float32),
+                phase=float(child.phase),
+                omega=float(child.omega),
+                energy=float(np.clip(child.energy, 0.0, self.cfg.token_energy_cap)),
+                genome_fragment=child.identity_bytes,
+                genome_weight=1.0,
+                ifs_fragment=child.ifs,
+                ifs_weight=1.0,
+                emitter_id=int(child.token_id),
+                step_idx=self.step_idx,
+                round_idx=-1,
+                capsule_token=child,
+                lineage_depth=int(self.lineage_depth.get(int(child.token_id), 0)),
+            )
             self.super_tokens[child.token_id] = child
+            self.token_anchor_slot[int(child.token_id)] = int(child_slot)
             self.next_token_id += 1
             births += 1
             events.append(
-                f"mint {child.token_id} <- ({a_id},{b_id}) syn={syn:.3f} hits={hits} "
+                f"mint {child.token_id} <- ({a_id},{b_id}) syn={syn:.3f} local={local_mass.get(a_id, 0.0) + local_mass.get(b_id, 0.0):.3f} "
+                f"parent_pay={paid_a+paid_b:.3f}/{spawn_cost:.3f} "
+                f"explore={1 if exploratory else 0} merit={merit:.3f} "
                 f"ab={r_ab:.3f} a={r_a:.3f} b={r_b:.3f} "
                 f"gap_genome={1 if gap_ident is not None else 0} glen={int(gap_ident.size) if gap_ident is not None else 0} "
                 f"gap_ifs={1 if gap_ifs is not None else 0}"
@@ -2276,81 +3103,167 @@ class EmeraEngine:
         if not self.cfg.conserve_total_energy and cfg.energy_inflow_per_step > 0.0:
             self._reservoir_add(cfg.energy_inflow_per_step)
 
+        # Source-of-truth sync: organisms exist only as gap capsules.
+        self._sync_super_tokens_from_gap()
+
         active_rounds: dict[int, int] = {}
         last_strength: dict[int, float] = {}
         prefix_match_frac: dict[int, float] = {}
-        for tid, token in self.super_tokens.items():
-            if token.energy <= cfg.min_viable_energy:
+        step_chaos_energy = 0.0
+        step_chaos_substeps = 0
+        step_chaos_organisms = 0
+        for tid in self._local_live_token_ids():
+            token = self.super_tokens.get(int(tid))
+            if token is None or float(token.energy) <= cfg.min_viable_energy:
                 continue
-            prefix_match_frac[tid] = self._identity_prefix_fraction(token.identity_bytes)
+            prefix_match_frac[int(tid)] = self._identity_prefix_fraction(
+                token.identity_bytes
+            )
 
-        # K synchronized rounds; writes are immediate and visible in following rounds.
+        # K synchronized rounds; only local frontier-neighborhood capsules can act.
         for round_idx in range(cfg.k_rounds):
             if self.cfg.conserve_total_energy:
-                lost = float(np.sum(self.gap.energy) * max(1.0 - self.cfg.gap_decay, 0.0))
+                lost = float(
+                    np.sum(self.gap.energy) * max(1.0 - self.cfg.gap_decay, 0.0)
+                )
                 self._reservoir_add(lost)
             self.gap.decay()
-            for tid in list(self.super_tokens.keys()):
-                token = self.super_tokens.get(tid)
-                if token is None or token.energy <= cfg.min_viable_energy:
+            round_ids = [
+                int(tid)
+                for tid in self._local_live_token_ids()
+                if int(tid) in self.super_tokens
+                and float(self.super_tokens[int(tid)].energy) > cfg.min_viable_energy
+            ]
+            if not round_ids:
+                continue
+            batch_size = max(int(self.cfg.gap_read_batch_size), 1)
+            d_gap = int(self.cfg.gap_dim)
+            for i0 in range(0, len(round_ids), batch_size):
+                chunk_ids = round_ids[i0 : i0 + batch_size]
+                live_ids: list[int] = []
+                batch_sig = np.zeros((batch_size, d_gap), dtype=np.float32)
+                batch_width = np.zeros((batch_size,), dtype=np.float32)
+                batch_phase = np.zeros((batch_size,), dtype=np.float32)
+                batch_coupling = np.zeros((batch_size,), dtype=np.float32)
+                batch_valid = np.zeros((batch_size,), dtype=np.float32)
+                for tid in chunk_ids:
+                    token = self.super_tokens.get(int(tid))
+                    if token is None or token.energy <= cfg.min_viable_energy:
+                        continue
+                    j = len(live_ids)
+                    if j >= batch_size:
+                        break
+                    live_ids.append(int(tid))
+                    batch_sig[j] = np.asarray(token.signature, dtype=np.float32)
+                    batch_width[j] = float(token.resonance_width)
+                    batch_phase[j] = float(token.phase)
+                    batch_coupling[j] = float(token.phase_coupling)
+                    batch_valid[j] = 1.0
+                if not live_ids:
                     continue
-                read = self.gap.read(
-                    receiver_signature=token.signature,
-                    resonance_width=token.resonance_width,
-                    receiver_phase=token.phase,
-                    phase_coupling=token.phase_coupling,
-                )
-                resonance_latent = self._gap_to_latent(read.resonance)
-                substeps = max(int(self.cfg.chaos_substeps_per_round), 1)
-                vel_sum = np.zeros((2,), dtype=np.float32)
-                vel2 = vel_sum
-                for _ in range(substeps):
-                    vel2 = token.chaos_step(self.rng, resonance_latent)
-                    vel_sum += vel2.astype(np.float32)
-                vel2 = (vel_sum / float(substeps)).astype(np.float32)
-                last_strength[tid] = read.strength
 
-                prefix_score = float(prefix_match_frac.get(tid, 0.0))
-                wake_score = 0.85 * prefix_score + 0.15 * float(read.strength)
-                activate = wake_score >= token.activation_threshold
-                if not activate:
-                    continue
-                emit, vel, eng = token.emission(cfg, vel2)
-                if eng <= cfg.min_viable_energy:
-                    continue
-                eng_paid = self._drain_token_to_gap(token, eng)
-                if eng_paid <= cfg.min_viable_energy:
-                    if self.cfg.conserve_total_energy and eng_paid > 0.0:
-                        self._reservoir_add(eng_paid)
-                    continue
-                if self.cfg.conserve_total_energy:
-                    overwritten = float(self.gap.energy[self.gap.ptr])
-                    if overwritten > 0.0:
-                        self._reservoir_add(overwritten)
-                self.gap.write(
-                    point=emit,
-                    velocity=vel,
-                    phase=token.phase,
-                    omega=token.omega,
-                    energy=eng_paid,
-                    genome_fragment=token.identity_bytes,
-                    genome_weight=float(read.strength),
-                    ifs_fragment=token.ifs,
-                    ifs_weight=float(read.strength),
-                    emitter_id=tid,
-                    step_idx=self.step_idx,
-                    round_idx=round_idx,
+                batch_resonance, batch_strength = self.gap.read_many(
+                    receiver_signature=batch_sig,
+                    resonance_width=batch_width,
+                    receiver_phase=batch_phase,
+                    phase_coupling=batch_coupling,
+                    valid_mask=batch_valid,
                 )
-                active_rounds[tid] = active_rounds.get(tid, 0) + 1
+
+                for j, tid in enumerate(live_ids):
+                    token = self.super_tokens.get(int(tid))
+                    if token is None or token.energy <= cfg.min_viable_energy:
+                        continue
+                    read_strength = float(batch_strength[j])
+                    resonance_latent = self._gap_to_latent(
+                        np.asarray(batch_resonance[j], dtype=np.float32)
+                    )
+                    # Energy-regulated chaos iterations: min steps are free,
+                    # additional steps cost chaos_substep_cost each.
+                    min_sub = max(int(cfg.chaos_min_substeps), 1)
+                    max_sub = max(int(cfg.chaos_max_substeps), min_sub)
+                    cost_per = float(cfg.chaos_substep_cost)
+                    if cost_per > 0.0 and max_sub > min_sub:
+                        spare = max(
+                            float(token.energy) - float(cfg.min_viable_energy), 0.0
+                        )
+                        affordable = int(spare / cost_per)
+                        substeps = min(min_sub + affordable, max_sub)
+                    else:
+                        substeps = max_sub
+                    chaos_paid = 0.0
+                    if cost_per > 0.0 and substeps > min_sub:
+                        chaos_paid = float(substeps - min_sub) * cost_per
+                        self._drain_token_energy(token, chaos_paid)
+                    step_chaos_energy += chaos_paid
+                    step_chaos_substeps += substeps
+                    step_chaos_organisms += 1
+                    vel_sum = np.zeros((2,), dtype=np.float32)
+                    vel2 = vel_sum
+                    for _ in range(substeps):
+                        vel2 = token.chaos_step(self.rng, resonance_latent)
+                        vel_sum += vel2.astype(np.float32)
+                    vel2 = (vel_sum / float(substeps)).astype(np.float32)
+                    last_strength[tid] = read_strength
+
+                    prefix_score = float(prefix_match_frac.get(tid, 0.0))
+                    wake_score = 0.85 * prefix_score + 0.15 * read_strength
+                    activate = wake_score >= token.activation_threshold
+                    anchor_slot = int(self.token_anchor_slot.get(int(tid), -1))
+                    if not activate:
+                        if anchor_slot >= 0:
+                            self._refresh_capsule_slot(
+                                token, anchor_slot, read_strength=read_strength
+                            )
+                        continue
+                    emit, vel, eng = token.emission(cfg, vel2)
+                    if eng <= cfg.min_viable_energy:
+                        if anchor_slot >= 0:
+                            self._refresh_capsule_slot(
+                                token, anchor_slot, read_strength=read_strength
+                            )
+                        continue
+                    eng_paid = self._drain_token_to_gap(token, eng)
+                    if eng_paid <= cfg.min_viable_energy:
+                        if self.cfg.conserve_total_energy and eng_paid > 0.0:
+                            self._reservoir_add(eng_paid)
+                        if anchor_slot >= 0:
+                            self._refresh_capsule_slot(
+                                token, anchor_slot, read_strength=read_strength
+                            )
+                        continue
+                    if self.cfg.conserve_total_energy:
+                        overwritten_slot = int(self.gap.ptr)
+                        overwritten_tid = int(
+                            self.gap.capsule_token_id[overwritten_slot]
+                        )
+                        overwritten = float(self.gap.energy[overwritten_slot])
+                        if overwritten > 0.0 and overwritten_tid != int(token.token_id):
+                            self._reservoir_add(overwritten)
+                    self._write_capsule_emission(
+                        token=token,
+                        point=emit,
+                        velocity=vel,
+                        energy=float(token.energy),
+                        read_strength=read_strength,
+                        round_idx=round_idx,
+                    )
+                    active_rounds[tid] = active_rounds.get(tid, 0) + 1
 
         self.last_resonance_strength = last_strength
 
-        active_ids = [tid for tid, cnt in active_rounds.items() if cnt > 0 and tid in self.super_tokens]
+        local_live_ids = self._local_live_token_ids()
+        active_ids = [
+            tid
+            for tid, cnt in active_rounds.items()
+            if cnt > 0 and tid in self.super_tokens
+        ]
         if self.cfg.obligatory_proposals:
             frontier_ids: list[int] = []
             non_frontier_ids: list[int] = []
-            for tid, token in self.super_tokens.items():
-                if token.energy <= cfg.min_viable_energy:
+            for tid in local_live_ids:
+                token = self.super_tokens.get(int(tid))
+                if token is None or float(token.energy) <= cfg.min_viable_energy:
                     continue
                 if self._identity_contains_frontier_byte(token.identity_bytes):
                     frontier_ids.append(int(tid))
@@ -2360,53 +3273,101 @@ class EmeraEngine:
             if frontier_ids:
                 n = min(len(non_frontier_ids), int(cfg.proposal_frontier_contrast))
                 if n > 0:
-                    ridx = np.asarray(self.rng.choice(len(non_frontier_ids), size=n, replace=False), dtype=np.int64)
+                    ridx = np.asarray(
+                        self.rng.choice(len(non_frontier_ids), size=n, replace=False),
+                        dtype=np.int64,
+                    )
                     contrast = [non_frontier_ids[int(i)] for i in ridx.tolist()]
                 else:
                     contrast = []
                 proposal_ids = frontier_ids + contrast
             else:
-                proposal_ids = []
+                n = min(len(non_frontier_ids), int(cfg.proposal_frontier_fallback))
+                if n > 0 and len(non_frontier_ids) > n:
+                    ridx = np.asarray(
+                        self.rng.choice(len(non_frontier_ids), size=n, replace=False),
+                        dtype=np.int64,
+                    )
+                    proposal_ids = [non_frontier_ids[int(i)] for i in ridx.tolist()]
+                elif n > 0:
+                    proposal_ids = list(non_frontier_ids)
+                else:
+                    proposal_ids = []
         else:
-            proposal_ids = active_ids
+            active_set = set(int(x) for x in active_ids)
+            proposal_ids = [
+                int(tid) for tid in local_live_ids if int(tid) in active_set
+            ]
+            if not proposal_ids:
+                proposal_ids = [int(tid) for tid in local_live_ids]
+
         proposals: list[Proposal] = []
         for tid in proposal_ids:
-            token = self.super_tokens[tid]
+            token = self.super_tokens.get(int(tid))
+            if token is None:
+                continue
             prop = self._proposal_for_token(token, last_strength.get(tid, 0.0))
             if prop is not None:
                 proposals.append(prop)
         proposals_raw_count = len(proposals)
-        proposals, frontier_match_count, proposals_gated_count = self._gate_proposals_to_frontier(proposals)
+        proposals, frontier_match_count, proposals_gated_count = (
+            self._gate_proposals_to_frontier(proposals)
+        )
         frontier_rescue_spawned = 0
+        frontier_rescue_ids: set[int] = set()
+
+        proposal_evals: list[tuple[Proposal, dict[str, float | int]]] = []
+        for p in proposals:
+            e = self._proposal_realized_components(p)
+            proposal_evals.append((p, e))
+
+        if int(cfg.frontier_rescue_max_per_step) > 0:
+            best_match = max(
+                (int(e["match_len"]) for _, e in proposal_evals), default=0
+            )
+            if best_match <= 1:
+                frontier_tid = int(self.world.peek(1)[0])
+                for _ in range(int(cfg.frontier_rescue_max_per_step)):
+                    rescue_tok = self._spawn_frontier_specialist(frontier_tid)
+                    if rescue_tok is None:
+                        break
+                    frontier_rescue_spawned += 1
+                    frontier_rescue_ids.add(int(rescue_tok.token_id))
+                    rescue_prop = self._proposal_for_token(rescue_tok, 0.0)
+                    if rescue_prop is None:
+                        continue
+                    proposals.append(rescue_prop)
+                    rescue_eval = self._proposal_realized_components(rescue_prop)
+                    proposal_evals.append((rescue_prop, rescue_eval))
+                    if int(rescue_eval["match_len"]) > 0:
+                        break
 
         proposer_ids = [int(p.token_id) for p in proposals]
 
         winner: Optional[Proposal] = None
         winner_eval: Optional[dict[str, float | int]] = None
-        proposal_evals: list[tuple[Proposal, dict[str, float | int]]] = []
-        if proposals:
-            for p in proposals:
-                e = self._proposal_realized_components(p)
-                proposal_evals.append((p, e))
-                if winner is None or winner_eval is None:
-                    winner = p
-                    winner_eval = e
+        winner_rank: tuple[float, float, float, float] | None = None
+        if proposal_evals:
+            for p, e in proposal_evals:
+                if int(p.token_id) in frontier_rescue_ids:
                     continue
-                # Selection is environmental: best realized score wins.
-                if (
-                    float(e["score"]) > float(winner_eval["score"])
-                    or (
-                        float(e["score"]) == float(winner_eval["score"])
-                        and int(e["match_len"]) > int(winner_eval["match_len"])
-                    )
-                    or (
-                        float(e["score"]) == float(winner_eval["score"])
-                        and int(e["match_len"]) == int(winner_eval["match_len"])
-                        and float(p.confidence) > float(winner.confidence)
-                    )
-                ):
+                m = int(e["match_len"])
+                plen = max(int(e["proposal_len"]), 1)
+                rank = (
+                    float(m),
+                    float(m) / float(plen),
+                    float(p.confidence),
+                    float(e["score"]),
+                )
+                if winner is None or winner_eval is None or winner_rank is None:
                     winner = p
                     winner_eval = e
+                    winner_rank = rank
+                    continue
+                if rank > winner_rank:
+                    winner = p
+                    winner_eval = e
+                    winner_rank = rank
 
         longest_silent_turn_id = -1
         longest_silent_turn_steps = 0
@@ -2420,6 +3381,7 @@ class EmeraEngine:
         longest_silent_turn_parent_b = -1
         longest_silent_turn_identity_bytes: list[int] = []
         if proposal_evals:
+
             def _silence_for(prop: Proposal) -> int:
                 tok = self.super_tokens.get(int(prop.token_id))
                 if tok is None:
@@ -2451,7 +3413,9 @@ class EmeraEngine:
                 longest_silent_turn_parent_b = int(best_tok.parent_b)
                 longest_silent_turn_identity_bytes = [int(x) for x in ib.tolist()]
 
-        attempt_map: Dict[int, float] = {int(p.token_id): max(float(p.bet), 0.0) for p in proposals}
+        attempt_map: Dict[int, float] = {
+            int(p.token_id): max(float(p.bet), 0.0) for p in proposals
+        }
         attempt_total = float(sum(attempt_map.values()))
 
         if winner is None:
@@ -2461,6 +3425,7 @@ class EmeraEngine:
             disc_cost = discovery_cost(unmatched_len, cfg)
             jackpot = 0.0
             winner_id = None
+            winner_from_frontier_rescue = 0
             winner_conf = 0.0
             proposal_len = 0
             winner_super_token_len = 0
@@ -2474,10 +3439,15 @@ class EmeraEngine:
             disc_cost = float(winner_eval["discovery_cost"])
             jackpot = float(winner_eval["jackpot"])
             winner_id = winner.token_id
+            winner_from_frontier_rescue = int(
+                int(winner.token_id) in frontier_rescue_ids
+            )
             winner_conf = winner.confidence
             winner_token_ref = self.super_tokens.get(winner.token_id)
             if winner_token_ref is not None:
-                winner_super_token_len = int(np.asarray(winner_token_ref.identity_bytes, dtype=np.int32).size)
+                winner_super_token_len = int(
+                    np.asarray(winner_token_ref.identity_bytes, dtype=np.int32).size
+                )
                 winner_inactivity_before = int(winner_token_ref.inactivity_steps)
             else:
                 winner_super_token_len = 0
@@ -2485,12 +3455,10 @@ class EmeraEngine:
 
         base = base_toll(advance_len, cfg)
 
-        # Ambient thermodynamic dissipation.
         for token in self.super_tokens.values():
             diss_rate = float(self.laws["ambient_dissipation"])
             self._drain_token_energy(token, max(token.energy, 0.0) * diss_rate)
 
-        # Baseline metabolism: a small universal tax that recycles into reservoir.
         actual_metabolic_tax = 0.0
         if cfg.metabolic_tax_rate > 0.0:
             for token in self.super_tokens.values():
@@ -2499,15 +3467,12 @@ class EmeraEngine:
                     max(token.energy, 0.0) * float(cfg.metabolic_tax_rate),
                 )
 
-        # Attempts cost the proposers.
         actual_attempt_total = 0.0
         for tid, c in attempt_map.items():
             token = self.super_tokens.get(tid)
             if token is not None:
                 actual_attempt_total += self._drain_token_energy(token, c)
 
-        # Contrastive settlement over all active proposals:
-        # confident correctness gets rewarded, confident errors get penalized.
         actual_contrastive_bonus = 0.0
         actual_contrastive_penalty = 0.0
         if bool(self.cfg.contrastive_enabled):
@@ -2521,27 +3486,32 @@ class EmeraEngine:
                 conf = float(np.clip(p.confidence, 0.0, 1.0))
                 bonus_req = float(self.cfg.contrastive_correct_reward) * conf * acc
                 wrong = float(1.0 - acc)
-                penalty_req = float(self.cfg.contrastive_wrong_penalty) * (conf ** float(self.cfg.contrastive_wrong_exp)) * wrong
+                penalty_req = (
+                    float(self.cfg.contrastive_wrong_penalty)
+                    * (conf ** float(self.cfg.contrastive_wrong_exp))
+                    * wrong
+                )
 
                 if penalty_req > 0.0:
-                    actual_contrastive_penalty += self._drain_token_energy(token, penalty_req)
+                    actual_contrastive_penalty += self._drain_token_energy(
+                        token, penalty_req
+                    )
                 if bonus_req > 0.0:
-                    actual_contrastive_bonus += self._credit_token_energy(token, bonus_req)
+                    actual_contrastive_bonus += self._credit_token_energy(
+                        token, bonus_req
+                    )
 
-        # Discovery penalty is paid by the winning proposer.
         actual_discovery_cost = 0.0
         if winner is not None and disc_cost > 0.0:
             token = self.super_tokens.get(winner.token_id)
             if token is not None:
                 actual_discovery_cost += self._drain_token_energy(token, disc_cost)
 
-        # Travel is never free: every alive token pays base toll each step.
         actual_base_toll = 0.0
         if base > 0.0:
             for token in self.super_tokens.values():
                 actual_base_toll += self._drain_token_energy(token, base)
 
-        # Jackpot reward to winner (or winner+parents if child).
         actual_jackpot = 0.0
         if winner is not None and jackpot > 0.0:
             token = self.super_tokens.get(winner.token_id)
@@ -2576,7 +3546,9 @@ class EmeraEngine:
                         int(winner_inactivity_before),
                     )
                 if float(winner_eval["score"]) > 0.0 and float(winner.bet) > 0.0:
-                    token.max_paid_bet = max(float(token.max_paid_bet), float(winner.bet))
+                    token.max_paid_bet = max(
+                        float(token.max_paid_bet), float(winner.bet)
+                    )
 
         proposer_set = set(proposer_ids)
         inactive_ids: list[int] = []
@@ -2597,19 +3569,25 @@ class EmeraEngine:
                         token.energy += req
             elif total_req > 0.0 and self.energy_reservoir > 0.0:
                 if self.cfg.conserve_total_energy:
-                    step_pool = actual_attempt_total + actual_discovery_cost + actual_base_toll
+                    step_pool = (
+                        actual_attempt_total + actual_discovery_cost + actual_base_toll
+                    )
                     relief_budget = 0.0
                     active_now = len(self.super_tokens)
                     target_active = max(float(self.cfg.target_active_super), 1.0)
                     if (
                         active_now > 0
-                        and float(active_now) < float(self.cfg.survivor_relief_active_frac) * target_active
+                        and float(active_now)
+                        < float(self.cfg.survivor_relief_active_frac) * target_active
                     ):
                         relief_budget = min(
                             self.energy_reservoir,
-                            float(self.cfg.survivor_relief_reservoir_frac) * self.energy_reservoir,
+                            float(self.cfg.survivor_relief_reservoir_frac)
+                            * self.energy_reservoir,
                         )
-                    max_pay = min(total_req, self.energy_reservoir, step_pool + relief_budget)
+                    max_pay = min(
+                        total_req, self.energy_reservoir, step_pool + relief_budget
+                    )
                 else:
                     max_pay = min(total_req, self.energy_reservoir)
                 factor = min(1.0, max_pay / total_req) if total_req > 0.0 else 0.0
@@ -2627,7 +3605,6 @@ class EmeraEngine:
 
         self.world.advance(advance_len)
 
-        # Update cooperation signal from winning context.
         if winner is not None and winner.token_id in self.super_tokens:
             wt = self.super_tokens[winner.token_id]
             contrib = self.gap.contribution_weights(
@@ -2645,10 +3622,8 @@ class EmeraEngine:
             b_copy, copy_events = self._self_copy_cycle(proposal_evals)
             self_copy_births += b_copy
             events.extend(copy_events)
-
         births = int(self_copy_births)
 
-        # Keep token numerics bounded to avoid NaN cascades.
         for token in self.super_tokens.values():
             if not np.isfinite(token.energy):
                 token.energy = 0.0
@@ -2657,8 +3632,12 @@ class EmeraEngine:
                 token.low_energy_steps = int(getattr(token, "low_energy_steps", 0)) + 1
             else:
                 token.low_energy_steps = 0
-            token.state_vec = np.nan_to_num(token.state_vec, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-            token.signature = np.nan_to_num(token.signature, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+            token.state_vec = np.nan_to_num(
+                token.state_vec, nan=0.0, posinf=0.0, neginf=0.0
+            ).astype(np.float32)
+            token.signature = np.nan_to_num(
+                token.signature, nan=0.0, posinf=0.0, neginf=0.0
+            ).astype(np.float32)
             token.proposal_drift = np.nan_to_num(
                 token.proposal_drift, nan=0.0, posinf=0.0, neginf=0.0
             ).astype(np.float32)
@@ -2668,32 +3647,71 @@ class EmeraEngine:
                 token.omega = float(self.cfg.omega_base)
 
         dead_ids: list[int] = []
+        dead_ages: list[int] = []
         dead_token_energy = 0.0
+        recycled_gap = 0.0
         for tid, token in list(self.super_tokens.items()):
-            if token.energy <= 0.0:
-                dead_ids.append(tid)
+            slot = int(self.token_anchor_slot.get(int(tid), -1))
+            anchored = (
+                slot >= 0
+                and slot < int(self.cfg.gap_len)
+                and int(self.gap.capsule_token_id[slot]) == int(tid)
+            )
+            dead = False
+            if not anchored:
+                dead = True
+            elif token.energy <= 0.0:
+                dead = True
+            elif (
+                token.energy < cfg.min_viable_energy
+                and int(getattr(token, "low_energy_steps", 0))
+                > cfg.survivor_grace_steps
+            ):
+                dead = True
+            if dead:
+                dead_ids.append(int(tid))
                 dead_token_energy += max(float(token.energy), 0.0)
-                del self.super_tokens[tid]
+                dead_ages.append(
+                    max(
+                        int(self.step_idx)
+                        - int(getattr(token, "birth_step", self.step_idx)),
+                        0,
+                    )
+                )
+                if anchored:
+                    recycled_gap += float(max(self.gap.energy[slot], 0.0))
+                    self.gap.clear_slot(slot)
+                self.token_anchor_slot.pop(int(tid), None)
+                del self.super_tokens[int(tid)]
                 continue
-            if token.energy < cfg.min_viable_energy and int(getattr(token, "low_energy_steps", 0)) > cfg.survivor_grace_steps:
-                dead_ids.append(tid)
-                dead_token_energy += max(float(token.energy), 0.0)
-                del self.super_tokens[tid]
+            if anchored:
+                self._refresh_capsule_slot(
+                    token, slot, read_strength=last_strength.get(int(tid), 0.0)
+                )
+
+        if dead_ages:
+            for age in dead_ages:
+                if self.capsule_death_events <= 0:
+                    self.capsule_half_life_ema = float(age)
+                else:
+                    self.capsule_half_life_ema = 0.95 * float(
+                        self.capsule_half_life_ema
+                    ) + 0.05 * float(age)
+                self.capsule_death_events += 1
+
         if dead_ids:
-            dead_arr = np.asarray(dead_ids, dtype=np.int64)
-            dead_gap_mask = np.isin(self.gap.emitter_id, dead_arr)
-            recycled_gap = float(np.sum(self.gap.energy[dead_gap_mask]))
             if self.cfg.conserve_total_energy:
                 recycled = recycled_gap + dead_token_energy
             else:
-                recycled = (
-                    float(self.cfg.death_recycle_fraction) * recycled_gap
-                    + float(self.cfg.death_recycle_flat) * float(len(dead_ids))
+                recycled = float(
+                    self.cfg.death_recycle_fraction
+                ) * recycled_gap + float(self.cfg.death_recycle_flat) * float(
+                    len(dead_ids)
                 )
             self._reservoir_add(recycled)
-            self.gap.purge_emitters(dead_ids)
             if recycled > 0.0:
                 events.append(f"decompose +{recycled:.3f}")
+
         self.coop.prune_dead(self.super_tokens.keys())
 
         if (self.step_idx % cfg.mint_interval) == 0 and len(self.super_tokens) >= 2:
@@ -2719,15 +3737,49 @@ class EmeraEngine:
         if law_event:
             events.append(law_event)
 
+        # Final sync after births/deaths/overwrites.
+        self._sync_super_tokens_from_gap()
+
         discovery_advance = max(advance_len - match_len, 0)
+        max_symbio_depth, root_only_fraction = self._lineage_metrics()
+        gap_compression_ratio = self._gap_compression_ratio()
+
+        live_slots = self.gap.live_capsule_slots(
+            min_energy=max(self.cfg.min_viable_energy * 0.25, 1e-12)
+        )
+        nonroot_live_capsules = 0
+        lineage_persistence_1k = 0.0
+        if live_slots.size > 0:
+            parent_a = np.asarray(self.gap.capsule_parent_a[live_slots], dtype=np.int64)
+            parent_b = np.asarray(self.gap.capsule_parent_b[live_slots], dtype=np.int64)
+            depth = np.asarray(
+                self.gap.capsule_lineage_depth[live_slots], dtype=np.int32
+            )
+            age = (
+                int(self.step_idx)
+                - np.asarray(self.gap.capsule_birth_step[live_slots], dtype=np.int64)
+            ).astype(np.int64)
+            nonroot_mask = (depth > 0) | (parent_a >= 0) | (parent_b >= 0)
+            nonroot_live_capsules = int(np.sum(nonroot_mask))
+            if nonroot_live_capsules > 0:
+                lineage_persistence_1k = float(
+                    np.sum(nonroot_mask & (age >= 1000)) / float(nonroot_live_capsules)
+                )
+
         stats = {
             "step": self.step_idx,
             "active_super": len(self.super_tokens),
+            "gap_read_backend": str(self.gap.read_backend),
+            "max_symbio_depth": int(max_symbio_depth),
+            "max_symbio_depth_ever": int(self.max_symbio_depth_ever),
+            "root_only_fraction": float(root_only_fraction),
+            "gap_compression_ratio": float(gap_compression_ratio),
             "proposers": len(proposer_ids),
             "proposers_raw": int(proposals_raw_count),
             "proposers_frontier": int(frontier_match_count),
             "proposers_gated": int(proposals_gated_count),
             "frontier_rescue_spawned": int(frontier_rescue_spawned),
+            "winner_from_frontier_rescue": int(winner_from_frontier_rescue),
             "winner_id": -1 if winner_id is None else int(winner_id),
             "winner_conf": float(winner_conf),
             "proposal_len": int(proposal_len),
@@ -2767,7 +3819,9 @@ class EmeraEngine:
             "longest_silent_turn_token_len": int(longest_silent_turn_token_len),
             "longest_silent_turn_parent_a": int(longest_silent_turn_parent_a),
             "longest_silent_turn_parent_b": int(longest_silent_turn_parent_b),
-            "longest_silent_turn_identity_bytes": list(longest_silent_turn_identity_bytes),
+            "longest_silent_turn_identity_bytes": list(
+                longest_silent_turn_identity_bytes
+            ),
             "law_attempt_cost_base": float(self.laws["attempt_cost_base"]),
             "law_jackpot_base": float(self.laws["jackpot_base"]),
             "law_spawn_cost": float(self.laws["spawn_cost"]),
@@ -2776,6 +3830,13 @@ class EmeraEngine:
             "reservoir": float(self.energy_reservoir),
             "energy_total": float(self._total_energy()),
             "energy_drift": float(self._total_energy() - self.total_energy_ref),
+            "nonroot_live_capsules": int(nonroot_live_capsules),
+            "capsule_half_life": float(self.capsule_half_life_ema),
+            "lineage_persistence_1k": float(lineage_persistence_1k),
+            "chaos_energy_spent": float(step_chaos_energy),
+            "chaos_avg_substeps": float(
+                step_chaos_substeps / max(step_chaos_organisms, 1)
+            ),
         }
         self.metrics.update(stats, events)
         return StepResult(stats=stats, events=events)
@@ -2797,29 +3858,39 @@ class EmeraEngine:
         arr = np.asarray(ids, dtype=np.int32)
         return np.clip(arr, 0, self.base_vocab_size - 1).astype(np.int32)
 
-    def decode_tokens_text(self, token_ids: list[int] | np.ndarray, max_chars: int = 2000) -> str:
+    def decode_tokens_text(
+        self, token_ids: list[int] | np.ndarray, max_chars: int = 2000
+    ) -> str:
         ids = [int(x) for x in np.asarray(token_ids, dtype=np.int32).tolist()]
         if not ids:
             return ""
         if self.cfg.token_space == "gpt2":
             text = decode_gpt2_tokens(ids, self.cfg.gpt2_model_name)
         else:
-            raw = bytes((int(t) & 0xFF) for t in ids if 0 <= int(t) < self.base_vocab_size)
+            raw = bytes(
+                (int(t) & 0xFF) for t in ids if 0 <= int(t) < self.base_vocab_size
+            )
             text = raw.decode("utf-8", errors="replace")
         if max_chars > 0 and len(text) > max_chars:
             return text[:max_chars] + "..."
         return text
 
-    def _infer_identity_tokens_for_frontier(self, identity_bytes: np.ndarray, frontier_tid: int) -> np.ndarray:
+    def _infer_identity_tokens_for_frontier(
+        self, identity_bytes: np.ndarray, frontier_tid: int
+    ) -> np.ndarray:
         b = np.asarray(identity_bytes, dtype=np.int32).reshape(-1)
         if b.size == 0:
             return np.zeros((0,), dtype=np.int32)
         frontier = int(np.clip(frontier_tid, 0, self.base_vocab_size - 1))
         if self.cfg.token_space == "byte_parity":
             frontier_symbol = frontier & 0xFF
-            offsets = np.where(np.clip(b, 0, 255) == frontier_symbol)[0].astype(np.int32)
+            offsets = np.where(np.clip(b, 0, 255) == frontier_symbol)[0].astype(
+                np.int32
+            )
         else:
-            offsets = np.where(np.clip(b, 0, self.base_vocab_size - 1) == frontier)[0].astype(np.int32)
+            offsets = np.where(np.clip(b, 0, self.base_vocab_size - 1) == frontier)[
+                0
+            ].astype(np.int32)
         if offsets.size == 0:
             suffix = b[: max(1, min(b.size, self.cfg.proposal_lmax))]
             if self.cfg.token_space == "byte_parity":
@@ -2867,17 +3938,33 @@ class EmeraEngine:
             reverse=True,
         )[: max(1, int(top_k) * 8)]
         frontier = int(np.clip(frontier_tid, 0, self.base_vocab_size - 1))
-        right = None if right_tid is None else int(np.clip(right_tid, 0, self.base_vocab_size - 1))
+        right = (
+            None
+            if right_tid is None
+            else int(np.clip(right_tid, 0, self.base_vocab_size - 1))
+        )
         for token in pool:
-            ids = self._infer_identity_tokens_for_frontier(token.identity_bytes, frontier)
+            ids = self._infer_identity_tokens_for_frontier(
+                token.identity_bytes, frontier
+            )
             if ids.size <= 0:
                 continue
             if ids.size >= 2:
                 nxt = int(ids[1])
             else:
                 nxt = int(ids[0])
-            energy_norm = float(np.clip(float(token.energy) / max(float(self.cfg.token_energy_cap), 1e-6), 0.0, 1.0))
-            length_norm = float(np.clip(float(ids.size) / max(float(self.cfg.proposal_lmax), 1.0), 0.0, 1.0))
+            energy_norm = float(
+                np.clip(
+                    float(token.energy) / max(float(self.cfg.token_energy_cap), 1e-6),
+                    0.0,
+                    1.0,
+                )
+            )
+            length_norm = float(
+                np.clip(
+                    float(ids.size) / max(float(self.cfg.proposal_lmax), 1.0), 0.0, 1.0
+                )
+            )
             conf = 0.30 + 0.45 * length_norm + 0.25 * energy_norm
             score = float(np.clip(conf * (0.25 + 0.75 * energy_norm), 0.0, 5.0))
             if right is not None and ids.size >= 3 and int(ids[2]) == right:
@@ -2917,6 +4004,89 @@ class EmeraEngine:
         preview = [(int(t), float(s)) for t, s in ranked[: max(1, int(top_k))]]
         return choice, {"used": int(len(details)), "top": preview}
 
+    def _infer_next_distribution(
+        self,
+        frontier_tid: int,
+        right_tid: int | None = None,
+        top_k: int = 64,
+        temperature: float = 1.0,
+        recent_tokens: list[int] | None = None,
+    ) -> tuple[int, dict[int, float], dict]:
+        candidates: dict[int, float] = {}
+        details: list[tuple[int, int, float]] = []
+        if not self.super_tokens:
+            fallback = int(np.clip(frontier_tid, 0, self.base_vocab_size - 1))
+            return fallback, {fallback: 1.0}, {"used": 0, "top": [(fallback, 1.0)]}
+
+        pool = sorted(
+            self.super_tokens.values(),
+            key=lambda t: float(t.energy),
+            reverse=True,
+        )[: max(1, max(int(top_k), 1) * 8)]
+        frontier = int(np.clip(frontier_tid, 0, self.base_vocab_size - 1))
+        right = (
+            None
+            if right_tid is None
+            else int(np.clip(right_tid, 0, self.base_vocab_size - 1))
+        )
+        for token in pool:
+            ids = self._infer_identity_tokens_for_frontier(
+                token.identity_bytes, frontier
+            )
+            if ids.size <= 0:
+                continue
+            nxt = int(ids[1]) if ids.size >= 2 else int(ids[0])
+            energy_norm = float(
+                np.clip(
+                    float(token.energy) / max(float(self.cfg.token_energy_cap), 1e-6),
+                    0.0,
+                    1.0,
+                )
+            )
+            length_norm = float(
+                np.clip(
+                    float(ids.size) / max(float(self.cfg.proposal_lmax), 1.0), 0.0, 1.0
+                )
+            )
+            conf = 0.30 + 0.45 * length_norm + 0.25 * energy_norm
+            score = float(np.clip(conf * (0.25 + 0.75 * energy_norm), 0.0, 5.0))
+            if right is not None and ids.size >= 3 and int(ids[2]) == right:
+                score += 0.35
+            elif right is not None and nxt == right:
+                score += 0.10
+            candidates[nxt] = candidates.get(nxt, 0.0) + score
+            details.append((int(token.token_id), nxt, score))
+
+        if not candidates:
+            fallback = int(np.clip(frontier, 0, self.base_vocab_size - 1))
+            return fallback, {fallback: 1.0}, {"used": 0, "top": [(fallback, 1.0)]}
+
+        if recent_tokens:
+            tail = recent_tokens[-32:]
+            freq: dict[int, int] = {}
+            for t in tail:
+                tid = int(t)
+                freq[tid] = freq.get(tid, 0) + 1
+            for tid, count in freq.items():
+                if tid in candidates:
+                    candidates[tid] -= 0.18 * float(count)
+
+        ranked = sorted(candidates.items(), key=lambda kv: kv[1], reverse=True)
+        if int(top_k) > 0:
+            support = ranked[: max(1, int(top_k))]
+        else:
+            support = ranked
+        toks = np.asarray([int(t) for t, _ in support], dtype=np.int32)
+        vals = np.asarray([float(s) for _, s in support], dtype=np.float64)
+        vals = vals - float(np.max(vals))
+        temp = max(float(temperature), 1e-6)
+        probs = np.exp(vals / temp)
+        probs = probs / max(float(np.sum(probs)), 1e-12)
+        choice = int(toks[int(np.argmax(probs))])
+        dist = {int(t): float(p) for t, p in zip(toks.tolist(), probs.tolist())}
+        preview = [(int(t), float(s)) for t, s in support[: min(16, len(support))]]
+        return choice, dist, {"used": int(len(details)), "top": preview}
+
     def infer_generate(
         self,
         prompt: str,
@@ -2928,7 +4098,10 @@ class EmeraEngine:
     ) -> dict:
         prompt_ids = self.encode_prompt_tokens(prompt)
         if prompt_ids.size <= 0:
-            prompt_ids = np.asarray([int(np.clip(self.world.peek(1)[0], 0, self.base_vocab_size - 1))], dtype=np.int32)
+            prompt_ids = np.asarray(
+                [int(np.clip(self.world.peek(1)[0], 0, self.base_vocab_size - 1))],
+                dtype=np.int32,
+            )
 
         seq: list[int] = [int(x) for x in prompt_ids.tolist()]
         max_new = max(1, int(max_new_tokens))
@@ -2988,17 +4161,382 @@ class EmeraEngine:
             "output_text": self.decode_tokens_text(out, max_chars=4000),
             "debug": debug_steps[:16],
         }
+-e 
 
+===== eval_horizon.py =====
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import time
+from dataclasses import asdict, replace
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from config import EmeraConfig
+from engine import EmeraEngine
+from world import encode_gpt2_tokens, encode_utf8_parity_tokens
+
+
+def _parse_bool(v: str | None, default: bool | None = None) -> bool | None:
+    if v is None:
+        return default
+    return v.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_horizons(text: str) -> list[int]:
+    vals: list[int] = []
+    for part in str(text).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        vals.append(max(int(part), 1))
+    uniq = sorted(set(vals))
+    if not uniq:
+        raise ValueError("No valid horizons provided.")
+    return uniq
+
+
+def _encode_text_tokens(text: str, token_space: str, gpt2_model_name: str, base_tokens: int) -> np.ndarray:
+    if token_space == "gpt2":
+        ids = encode_gpt2_tokens(text, gpt2_model_name)
+        arr = np.asarray(ids, dtype=np.int32)
+        return np.clip(arr, 0, max(base_tokens - 1, 0)).astype(np.int32)
+    ids = encode_utf8_parity_tokens(text)
+    return np.asarray(ids, dtype=np.int32)
+
+
+def _snap_to_newline(raw: bytes, idx: int) -> int:
+    idx = int(np.clip(idx, 0, len(raw)))
+    if idx <= 0 or idx >= len(raw):
+        return idx
+    right = raw.find(b"\n", idx, min(len(raw), idx + 4096))
+    if right >= 0:
+        return int(right + 1)
+    left = raw.rfind(b"\n", max(0, idx - 4096), idx)
+    if left >= 0:
+        return int(left + 1)
+    return idx
+
+
+def _split_corpus_bytes(raw: bytes, train_frac: float, val_frac: float) -> tuple[bytes, bytes, bytes]:
+    n = len(raw)
+    if n < 64:
+        raise ValueError("Corpus is too small to split.")
+    i_train = _snap_to_newline(raw, int(n * train_frac))
+    i_val = _snap_to_newline(raw, int(n * (train_frac + val_frac)))
+    i_train = int(np.clip(i_train, 1, n - 2))
+    i_val = int(np.clip(i_val, i_train + 1, n - 1))
+    return raw[:i_train], raw[i_train:i_val], raw[i_val:]
+
+
+def _sample_starts(token_count: int, max_h: int, num_contexts: int, seed: int) -> np.ndarray:
+    upper = int(token_count - max_h - 1)
+    if upper <= 0:
+        return np.zeros((0,), dtype=np.int64)
+    all_idx = np.arange(upper, dtype=np.int64)
+    if num_contexts <= 0 or num_contexts >= upper:
+        return all_idx
+    rng = np.random.default_rng(seed)
+    pick = np.asarray(rng.choice(upper, size=num_contexts, replace=False), dtype=np.int64)
+    pick.sort()
+    return pick
+
+
+def _evaluate_horizon(
+    engine: EmeraEngine,
+    tokens: np.ndarray,
+    horizons: list[int],
+    num_contexts: int,
+    rollout_len: int,
+    top_k: int,
+    temperature: float,
+    prob_floor: float,
+    seed: int,
+) -> dict[str, Any]:
+    max_h = int(max(horizons))
+    starts = _sample_starts(int(tokens.size), max_h=max_h, num_contexts=num_contexts, seed=seed)
+    if starts.size == 0:
+        raise ValueError("Split too small for requested horizons.")
+
+    per_h: dict[int, dict[str, float]] = {
+        int(h): {"nll_sum": 0.0, "acc_sum": 0.0, "count": 0.0}
+        for h in horizons
+    }
+    rollout_n = max(1, min(int(rollout_len), max_h))
+    exact_sum = 0.0
+    first_err_sum = 0.0
+
+    floor = max(float(prob_floor), 1e-15)
+    for start in starts.tolist():
+        seq: list[int] = [int(tokens[start])]
+        preds: list[int] = []
+        dists: list[dict[int, float]] = []
+        for _ in range(max_h):
+            nxt, dist, _ = engine._infer_next_distribution(
+                frontier_tid=seq[-1],
+                right_tid=None,
+                top_k=int(top_k),
+                temperature=float(temperature),
+                recent_tokens=seq,
+            )
+            preds.append(int(nxt))
+            dists.append(dist)
+            seq.append(int(nxt))
+
+        truth = np.asarray(tokens[start + 1 : start + max_h + 1], dtype=np.int32)
+        for h in horizons:
+            idx = int(h - 1)
+            true_tok = int(truth[idx])
+            p = float(dists[idx].get(true_tok, floor))
+            p = max(p, floor)
+            per_h[h]["nll_sum"] += -math.log(p)
+            per_h[h]["acc_sum"] += 1.0 if int(preds[idx]) == true_tok else 0.0
+            per_h[h]["count"] += 1.0
+
+        first_err = rollout_n
+        exact = 1.0
+        for i in range(rollout_n):
+            if int(preds[i]) != int(truth[i]):
+                first_err = i
+                exact = 0.0
+                break
+        exact_sum += exact
+        first_err_sum += float(first_err)
+
+    by_h: dict[str, Any] = {}
+    for h in horizons:
+        c = max(per_h[h]["count"], 1.0)
+        by_h[str(h)] = {
+            "acc": per_h[h]["acc_sum"] / c,
+            "nll": per_h[h]["nll_sum"] / c,
+        }
+
+    long_h = [h for h in horizons if h >= 32]
+    if not long_h:
+        long_h = horizons[-max(1, len(horizons) // 2) :]
+
+    lr_score = float(np.mean([by_h[str(h)]["acc"] for h in long_h]))
+    lr_nll = float(np.mean([by_h[str(h)]["nll"] for h in long_h]))
+    contexts = float(starts.size)
+    return {
+        "contexts": int(starts.size),
+        "horizons": by_h,
+        "lr_horizons": [int(h) for h in long_h],
+        "lr_score": lr_score,
+        "lr_nll": lr_nll,
+        "rollout_len": int(rollout_n),
+        "rollout_exact_match_rate": exact_sum / contexts,
+        "rollout_first_error_mean": first_err_sum / contexts,
+    }
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Held-out horizon-conditioned probability benchmark for Emera")
+    p.add_argument("--corpus-file", type=str, default="data/bible.txt")
+    p.add_argument("--token-space", type=str, choices=["byte_parity", "gpt2"], default="byte_parity")
+    p.add_argument("--gpt2-model-name", type=str, default="gpt2")
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--train-frac", type=float, default=0.70)
+    p.add_argument("--val-frac", type=float, default=0.15)
+    p.add_argument("--train-steps", type=int, default=2000)
+    p.add_argument("--world-vocab-size", type=int, default=512)
+    p.add_argument("--world-len", type=int, default=None)
+    p.add_argument("--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default=None)
+    p.add_argument("--gap-read-batch-size", type=int, default=None)
+    p.add_argument("--horizons", type=str, default="1,2,4,8,16,32,64,128,256")
+    p.add_argument("--num-contexts", type=int, default=512)
+    p.add_argument("--rollout-len", type=int, default=256)
+    p.add_argument("--eval-top-k", type=int, default=0)
+    p.add_argument("--eval-temperature", type=float, default=1.0)
+    p.add_argument("--prob-floor", type=float, default=1e-9)
+    p.add_argument("--splits-dir", type=str, default="out/horizon_splits")
+    p.add_argument("--output-json", type=str, default="out/horizon_eval.json")
+
+    # High-impact knobs for tuning sweeps.
+    p.add_argument("--proposal-lmax", type=int, default=None)
+    p.add_argument("--proposal-frontier-fallback", type=int, default=None)
+    p.add_argument("--proposal-frontier-contrast", type=int, default=None)
+    p.add_argument("--frontier-rescue-max-per-step", type=int, default=None)
+    p.add_argument("--frontier-rescue-energy", type=float, default=None)
+    p.add_argument("--chaos-min-substeps", type=int, default=None)
+    p.add_argument("--chaos-max-substeps", type=int, default=None)
+    p.add_argument("--chaos-substep-cost", type=float, default=None)
+    p.add_argument("--self-copy-enabled", type=str, default=None)
+    p.add_argument("--dynamic-laws", type=str, default=None)
+    p.add_argument("--seasons-enabled", type=str, default=None)
+    return p.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    horizons = _parse_horizons(args.horizons)
+    if args.train_steps < 1:
+        raise ValueError("--train-steps must be >= 1")
+    if args.num_contexts < 1:
+        raise ValueError("--num-contexts must be >= 1")
+    if not (0.0 < args.train_frac < 1.0):
+        raise ValueError("--train-frac must be in (0, 1)")
+    if not (0.0 < args.val_frac < 1.0):
+        raise ValueError("--val-frac must be in (0, 1)")
+    if args.train_frac + args.val_frac >= 1.0:
+        raise ValueError("train_frac + val_frac must be < 1.0")
+
+    raw = Path(args.corpus_file).read_bytes()
+    train_raw, val_raw, test_raw = _split_corpus_bytes(raw, train_frac=float(args.train_frac), val_frac=float(args.val_frac))
+    splits_dir = Path(args.splits_dir)
+    splits_dir.mkdir(parents=True, exist_ok=True)
+    train_file = splits_dir / "train.txt"
+    val_file = splits_dir / "val.txt"
+    test_file = splits_dir / "test.txt"
+    train_file.write_bytes(train_raw)
+    val_file.write_bytes(val_raw)
+    test_file.write_bytes(test_raw)
+
+    train_text = train_raw.decode("utf-8", errors="ignore")
+    val_text = val_raw.decode("utf-8", errors="ignore")
+    test_text = test_raw.decode("utf-8", errors="ignore")
+
+    base_tokens = 50257 if args.token_space == "gpt2" else 512
+    val_tokens = _encode_text_tokens(val_text, args.token_space, args.gpt2_model_name, base_tokens=base_tokens)
+    test_tokens = _encode_text_tokens(test_text, args.token_space, args.gpt2_model_name, base_tokens=base_tokens)
+    train_tokens = _encode_text_tokens(train_text, args.token_space, args.gpt2_model_name, base_tokens=base_tokens)
+
+    cfg = EmeraConfig()
+    world_len = int(args.world_len) if args.world_len is not None else int(max(train_tokens.size, 1))
+    updates: dict[str, Any] = {
+        "seed": int(args.seed),
+        "token_space": str(args.token_space),
+        "gpt2_model_name": str(args.gpt2_model_name),
+        "corpus_file": str(train_file),
+        "world_len": int(world_len),
+        "world_vocab_size": int(args.world_vocab_size),
+        "log_every": max(int(args.train_steps), 1),
+    }
+    if args.token_space == "gpt2":
+        updates["base_tokens"] = 50257
+        if args.world_vocab_size == 512:
+            updates["world_vocab_size"] = 50257
+    if args.proposal_lmax is not None:
+        updates["proposal_lmax"] = int(args.proposal_lmax)
+    if args.gap_read_backend is not None:
+        updates["gap_read_backend"] = str(args.gap_read_backend)
+    if args.gap_read_batch_size is not None:
+        updates["gap_read_batch_size"] = int(args.gap_read_batch_size)
+    if args.proposal_frontier_fallback is not None:
+        updates["proposal_frontier_fallback"] = int(args.proposal_frontier_fallback)
+    if args.proposal_frontier_contrast is not None:
+        updates["proposal_frontier_contrast"] = int(args.proposal_frontier_contrast)
+    if args.frontier_rescue_max_per_step is not None:
+        updates["frontier_rescue_max_per_step"] = int(args.frontier_rescue_max_per_step)
+    if args.frontier_rescue_energy is not None:
+        updates["frontier_rescue_energy"] = float(args.frontier_rescue_energy)
+    if args.chaos_min_substeps is not None:
+        updates["chaos_min_substeps"] = int(args.chaos_min_substeps)
+    if args.chaos_max_substeps is not None:
+        updates["chaos_max_substeps"] = int(args.chaos_max_substeps)
+    if args.chaos_substep_cost is not None:
+        updates["chaos_substep_cost"] = float(args.chaos_substep_cost)
+    b_self_copy = _parse_bool(args.self_copy_enabled, default=None)
+    if b_self_copy is not None:
+        updates["self_copy_enabled"] = bool(b_self_copy)
+    b_laws = _parse_bool(args.dynamic_laws, default=None)
+    if b_laws is not None:
+        updates["dynamic_laws"] = bool(b_laws)
+    b_seasons = _parse_bool(args.seasons_enabled, default=None)
+    if b_seasons is not None:
+        updates["seasons_enabled"] = bool(b_seasons)
+
+    cfg = replace(cfg, **updates)
+    cfg.validate()
+
+    t0 = time.time()
+    engine = EmeraEngine(cfg)
+    for _ in range(int(args.train_steps)):
+        engine.step()
+    train_elapsed = time.time() - t0
+    train_snap = engine.metrics.snapshot()
+    train_distance = int(train_snap.get("distance", 0))
+    effective_passes = float(train_distance) / max(float(cfg.world_len), 1.0)
+
+    eval_kwargs = dict(
+        horizons=horizons,
+        num_contexts=int(args.num_contexts),
+        rollout_len=int(args.rollout_len),
+        top_k=int(args.eval_top_k),
+        temperature=float(args.eval_temperature),
+        prob_floor=float(args.prob_floor),
+    )
+    val_eval = _evaluate_horizon(
+        engine=engine,
+        tokens=val_tokens,
+        seed=int(args.seed) + 11,
+        **eval_kwargs,
+    )
+    test_eval = _evaluate_horizon(
+        engine=engine,
+        tokens=test_tokens,
+        seed=int(args.seed) + 29,
+        **eval_kwargs,
+    )
+
+    out = {
+        "config": asdict(cfg),
+        "train_steps": int(args.train_steps),
+        "train_elapsed_sec": float(train_elapsed),
+        "train_distance": int(train_distance),
+        "effective_train_passes": float(effective_passes),
+        "split_bytes": {
+            "train": int(len(train_raw)),
+            "val": int(len(val_raw)),
+            "test": int(len(test_raw)),
+        },
+        "split_tokens": {
+            "train": int(train_tokens.size),
+            "val": int(val_tokens.size),
+            "test": int(test_tokens.size),
+        },
+        "val": val_eval,
+        "test": test_eval,
+    }
+
+    out_path = Path(args.output_json)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(out, indent=2, ensure_ascii=True), encoding="utf-8")
+    print(
+        f"horizon-eval done train_steps={args.train_steps} "
+        f"val_lr={val_eval['lr_score']:.4f} val_lr_nll={val_eval['lr_nll']:.4f} "
+        f"test_lr={test_eval['lr_score']:.4f} test_lr_nll={test_eval['lr_nll']:.4f} "
+        f"wrote={out_path}"
+    )
+
+
+if __name__ == "__main__":
+    main()
+-e 
 
 ===== gap_field.py =====
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable
+from typing import Any, Dict, Iterable
 
 import numpy as np
 
 from config import EmeraConfig
+
+_JAX_STATE: dict[str, Any] = {
+    "checked": False,
+    "ok": False,
+    "has_accel": False,
+    "jax": None,
+    "jnp": None,
+    "kernel": None,
+}
 
 
 def _normalize_vec(v: np.ndarray, eps: float = 1e-8) -> np.ndarray:
@@ -3006,6 +4544,84 @@ def _normalize_vec(v: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     if n <= eps:
         return np.zeros_like(v)
     return v / n
+
+
+def _ensure_jax_state() -> dict[str, Any]:
+    if bool(_JAX_STATE.get("checked", False)):
+        return _JAX_STATE
+    _JAX_STATE["checked"] = True
+    try:
+        import contextlib
+        import io
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            import jax
+            import jax.numpy as jnp
+
+            devices = jax.devices()
+
+        has_accel = any(str(getattr(d, "platform", "")).lower() != "cpu" for d in devices)
+
+        @jax.jit
+        def _read_many_jax_kernel(
+            points: Any,
+            phase: Any,
+            energy: Any,
+            receiver_signature: Any,
+            resonance_width: Any,
+            receiver_phase: Any,
+            phase_coupling: Any,
+            valid_mask: Any,
+        ) -> tuple[Any, Any]:
+            eff_energy = jnp.where(energy > 1e-9, energy, 0.0)
+            sum_energy = jnp.sum(eff_energy)
+            valid = jnp.clip(valid_mask.reshape(-1), 0.0, 1.0).astype(jnp.float32)
+
+            pts_norm = points / jnp.maximum(jnp.linalg.norm(points, axis=1, keepdims=True), 1e-8)
+            pts_norm = jnp.nan_to_num(pts_norm, nan=0.0, posinf=0.0, neginf=0.0)
+
+            recv = receiver_signature / jnp.maximum(
+                jnp.linalg.norm(receiver_signature, axis=1, keepdims=True),
+                1e-8,
+            )
+            recv = jnp.nan_to_num(recv, nan=0.0, posinf=0.0, neginf=0.0)
+            recv = recv * valid[:, None]
+
+            sim = jnp.clip(recv @ pts_norm.T, -1.0, 1.0)
+            width = jnp.maximum(resonance_width[:, None], 1e-3)
+            geo = jnp.exp(-((1.0 - sim) ** 2) / (2.0 * width * width))
+
+            phase_align = 0.5 * (1.0 + jnp.cos(phase[None, :] - receiver_phase[:, None]))
+            pc = phase_coupling[:, None]
+            phase_gate = (1.0 - pc) + pc * phase_align
+
+            w = eff_energy[None, :] * geo * phase_gate
+            w = jnp.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
+            w = w * valid[:, None]
+            total_w = jnp.sum(w, axis=1)
+
+            resonance = (w @ points) / jnp.maximum(total_w[:, None], 1e-9)
+            strength = jnp.clip(total_w / jnp.maximum(sum_energy, 1e-9), 0.0, 1.0)
+
+            has_energy = sum_energy > 1e-9
+            resonance = jnp.where(has_energy, resonance, jnp.zeros_like(resonance))
+            strength = jnp.where(has_energy, strength, jnp.zeros_like(strength))
+            resonance = resonance * valid[:, None]
+            strength = strength * valid
+            return resonance.astype(jnp.float32), strength.astype(jnp.float32)
+
+        _JAX_STATE["ok"] = True
+        _JAX_STATE["has_accel"] = bool(has_accel)
+        _JAX_STATE["jax"] = jax
+        _JAX_STATE["jnp"] = jnp
+        _JAX_STATE["kernel"] = _read_many_jax_kernel
+    except Exception:
+        _JAX_STATE["ok"] = False
+        _JAX_STATE["has_accel"] = False
+        _JAX_STATE["jax"] = None
+        _JAX_STATE["jnp"] = None
+        _JAX_STATE["kernel"] = None
+    return _JAX_STATE
 
 
 @dataclass
@@ -3032,7 +4648,45 @@ class GapField:
         self.emitter_id = np.full((cfg.gap_len,), -1, dtype=np.int64)
         self.step_idx = np.zeros((cfg.gap_len,), dtype=np.int64)
         self.round_idx = np.zeros((cfg.gap_len,), dtype=np.int32)
+        # Full substrate capsule payload: organism state lives in gap slots.
+        self.capsule_token_id = np.full((cfg.gap_len,), -1, dtype=np.int64)
+        self.capsule_parent_a = np.full((cfg.gap_len,), -1, dtype=np.int64)
+        self.capsule_parent_b = np.full((cfg.gap_len,), -1, dtype=np.int64)
+        self.capsule_birth_step = np.zeros((cfg.gap_len,), dtype=np.int64)
+        self.capsule_inactivity_steps = np.zeros((cfg.gap_len,), dtype=np.int32)
+        self.capsule_low_energy_steps = np.zeros((cfg.gap_len,), dtype=np.int32)
+        self.capsule_lineage_depth = np.zeros((cfg.gap_len,), dtype=np.int16)
+        self.capsule_max_paid_bet = np.zeros((cfg.gap_len,), dtype=np.float32)
+        self.capsule_max_silent_correct = np.zeros((cfg.gap_len,), dtype=np.int32)
+        self.capsule_state_vec = np.zeros((cfg.gap_len, cfg.d_latent), dtype=np.float32)
+        self.capsule_signature = np.zeros((cfg.gap_len, cfg.gap_dim), dtype=np.float32)
+        self.capsule_proposal_drift = np.zeros((cfg.gap_len, cfg.d_latent), dtype=np.float32)
+        self.capsule_traits = np.zeros((cfg.gap_len, 8), dtype=np.float32)
+        self.capsule_identity = np.full((cfg.gap_len, max(int(cfg.proposal_lmax), 1)), -1, dtype=np.int32)
+        self.capsule_identity_len = np.zeros((cfg.gap_len,), dtype=np.int16)
+        self.capsule_ifs = np.zeros((cfg.gap_len, int(cfg.num_ifs), 2, 3), dtype=np.float32)
         self.ptr = 0
+        self.read_backend = self._resolve_read_backend(str(cfg.gap_read_backend))
+
+    def _resolve_read_backend(self, requested: str) -> str:
+        req = str(requested).strip().lower()
+        if req not in {"auto", "numpy", "jax"}:
+            req = "auto"
+        if req == "numpy":
+            return "numpy"
+        jax_state = _ensure_jax_state()
+        if req == "jax":
+            return "jax" if bool(jax_state.get("ok", False)) else "numpy"
+        if bool(jax_state.get("ok", False)) and bool(jax_state.get("has_accel", False)):
+            est_work = (
+                int(self.cfg.gap_len)
+                * int(self.cfg.gap_dim)
+                * int(max(self.cfg.gap_read_batch_size, 1))
+            )
+            # Auto mode prefers NumPy for tiny kernels where host/device overhead dominates.
+            if est_work >= 500_000:
+                return "jax"
+        return "numpy"
 
     def decay(self) -> None:
         self.energy *= self.cfg.gap_decay
@@ -3055,6 +4709,8 @@ class GapField:
         emitter_id: int,
         step_idx: int,
         round_idx: int,
+        capsule_token: Any | None = None,
+        lineage_depth: int | None = None,
     ) -> None:
         p = self.ptr
         self.points[p] = point.astype(np.float32, copy=False)
@@ -3093,7 +4749,204 @@ class GapField:
         self.emitter_id[p] = int(emitter_id)
         self.step_idx[p] = int(step_idx)
         self.round_idx[p] = int(round_idx)
+        if capsule_token is not None:
+            self._store_capsule(p, capsule_token, lineage_depth)
         self.ptr = (p + 1) % self.cfg.gap_len
+
+    def _store_capsule(self, slot: int, token: Any, lineage_depth: int | None = None) -> None:
+        s = int(slot)
+        ident = np.asarray(getattr(token, "identity_bytes"), dtype=np.int32).reshape(-1)
+        n = min(int(ident.size), int(self.capsule_identity.shape[1]))
+        self.capsule_token_id[s] = int(getattr(token, "token_id"))
+        self.capsule_parent_a[s] = int(getattr(token, "parent_a", -1))
+        self.capsule_parent_b[s] = int(getattr(token, "parent_b", -1))
+        self.capsule_birth_step[s] = int(getattr(token, "birth_step", 0))
+        self.capsule_inactivity_steps[s] = int(getattr(token, "inactivity_steps", 0))
+        self.capsule_low_energy_steps[s] = int(getattr(token, "low_energy_steps", 0))
+        if lineage_depth is not None:
+            self.capsule_lineage_depth[s] = int(lineage_depth)
+        self.capsule_max_paid_bet[s] = float(getattr(token, "max_paid_bet", 0.0))
+        self.capsule_max_silent_correct[s] = int(getattr(token, "max_silent_correct", 0))
+        self.capsule_state_vec[s] = np.asarray(getattr(token, "state_vec"), dtype=np.float32)
+        self.capsule_signature[s] = np.asarray(getattr(token, "signature"), dtype=np.float32)
+        self.capsule_proposal_drift[s] = np.asarray(getattr(token, "proposal_drift"), dtype=np.float32)
+        self.capsule_traits[s, 0] = float(getattr(token, "activation_threshold", 0.5))
+        self.capsule_traits[s, 1] = float(getattr(token, "emission_amplitude", 0.4))
+        self.capsule_traits[s, 2] = float(getattr(token, "emission_decay", 0.15))
+        self.capsule_traits[s, 3] = float(getattr(token, "silence_growth_rate", 1.0))
+        self.capsule_traits[s, 4] = float(getattr(token, "resonance_width", 0.45))
+        self.capsule_traits[s, 5] = float(getattr(token, "phase_coupling", 0.25))
+        self.capsule_traits[s, 6] = float(getattr(token, "velocity_coupling", 0.20))
+        self.capsule_traits[s, 7] = float(getattr(token, "proposal_length_bias", 0.0))
+        self.capsule_identity[s].fill(-1)
+        if n > 0:
+            vmax = 255 if self.cfg.token_space == "byte_parity" else max(int(self.cfg.base_tokens) - 1, 0)
+            self.capsule_identity[s, :n] = np.clip(ident[:n], 0, vmax).astype(np.int32, copy=False)
+        self.capsule_identity_len[s] = int(n)
+        self.capsule_ifs[s] = np.asarray(getattr(token, "ifs"), dtype=np.float32)
+
+    def clear_slot(self, slot: int) -> None:
+        s = int(slot)
+        self.points[s] = 0.0
+        self.velocity[s] = 0.0
+        self.phase[s] = 0.0
+        self.omega[s] = 0.0
+        self.energy[s] = 0.0
+        self.genome_fragment[s] = -1
+        self.genome_len[s] = 0
+        self.genome_weight[s] = 0.0
+        self.ifs_fragment[s] = 0.0
+        self.ifs_weight[s] = 0.0
+        self.emitter_id[s] = -1
+        self.step_idx[s] = 0
+        self.round_idx[s] = 0
+        self.capsule_token_id[s] = -1
+        self.capsule_parent_a[s] = -1
+        self.capsule_parent_b[s] = -1
+        self.capsule_birth_step[s] = 0
+        self.capsule_inactivity_steps[s] = 0
+        self.capsule_low_energy_steps[s] = 0
+        self.capsule_lineage_depth[s] = 0
+        self.capsule_max_paid_bet[s] = 0.0
+        self.capsule_max_silent_correct[s] = 0
+        self.capsule_state_vec[s] = 0.0
+        self.capsule_signature[s] = 0.0
+        self.capsule_proposal_drift[s] = 0.0
+        self.capsule_traits[s] = 0.0
+        self.capsule_identity[s] = -1
+        self.capsule_identity_len[s] = 0
+        self.capsule_ifs[s] = 0.0
+
+    def live_capsule_slots(self, min_energy: float = 0.0) -> np.ndarray:
+        return np.where(
+            (self.capsule_token_id >= 0) & (self.energy > float(min_energy))
+        )[0].astype(np.int32, copy=False)
+
+    def _read_many_numpy(
+        self,
+        receiver_signature: np.ndarray,
+        resonance_width: np.ndarray,
+        receiver_phase: np.ndarray,
+        phase_coupling: np.ndarray,
+        valid_mask: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        sig = np.asarray(receiver_signature, dtype=np.float32)
+        widths = np.asarray(resonance_width, dtype=np.float32).reshape(-1)
+        rphase = np.asarray(receiver_phase, dtype=np.float32).reshape(-1)
+        pc = np.asarray(phase_coupling, dtype=np.float32).reshape(-1)
+
+        n = int(sig.shape[0])
+        if n <= 0:
+            return (
+                np.zeros((0, int(self.cfg.gap_dim)), dtype=np.float32),
+                np.zeros((0,), dtype=np.float32),
+            )
+        if valid_mask is None:
+            valid = np.ones((n,), dtype=np.float32)
+        else:
+            valid = np.asarray(valid_mask, dtype=np.float32).reshape(-1)
+            if valid.size != n:
+                raise ValueError("valid_mask must match receiver batch size")
+            valid = np.clip(valid, 0.0, 1.0)
+
+        energy = np.where(self.energy > 1e-9, self.energy, 0.0).astype(np.float32)
+        sum_energy = float(np.sum(energy))
+        if sum_energy <= 1e-9:
+            return (
+                np.zeros((n, int(self.cfg.gap_dim)), dtype=np.float32),
+                np.zeros((n,), dtype=np.float32),
+            )
+
+        pts = self.points.astype(np.float32, copy=False)
+        pts_norm = pts / np.maximum(np.linalg.norm(pts, axis=1, keepdims=True), 1e-8)
+        pts_norm = np.nan_to_num(pts_norm, nan=0.0, posinf=0.0, neginf=0.0)
+
+        recv = sig / np.maximum(np.linalg.norm(sig, axis=1, keepdims=True), 1e-8)
+        recv = np.nan_to_num(recv, nan=0.0, posinf=0.0, neginf=0.0)
+        recv = recv * valid.reshape(-1, 1)
+
+        sim = np.clip(recv @ pts_norm.T, -1.0, 1.0)
+        width = np.maximum(widths.reshape(-1, 1), 1e-3)
+        geo = np.exp(-((1.0 - sim) ** 2) / (2.0 * width * width)).astype(np.float32)
+
+        phase_align = 0.5 * (1.0 + np.cos(self.phase.reshape(1, -1) - rphase.reshape(-1, 1)))
+        phase_gate = (1.0 - pc.reshape(-1, 1)) + pc.reshape(-1, 1) * phase_align.astype(np.float32)
+
+        w = energy.reshape(1, -1) * geo * phase_gate
+        w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+        w *= valid.reshape(-1, 1)
+        total_w = np.sum(w, axis=1, dtype=np.float64).astype(np.float32)
+
+        resonance = (w @ pts).astype(np.float32)
+        resonance /= np.maximum(total_w.reshape(-1, 1), 1e-9)
+        resonance *= valid.reshape(-1, 1)
+
+        strength = np.clip(total_w / max(sum_energy, 1e-9), 0.0, 1.0).astype(np.float32)
+        strength *= valid
+        return resonance, strength
+
+    def _read_many_jax(
+        self,
+        receiver_signature: np.ndarray,
+        resonance_width: np.ndarray,
+        receiver_phase: np.ndarray,
+        phase_coupling: np.ndarray,
+        valid_mask: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        jax_state = _ensure_jax_state()
+        if not bool(jax_state.get("ok", False)):
+            return self._read_many_numpy(
+                receiver_signature=receiver_signature,
+                resonance_width=resonance_width,
+                receiver_phase=receiver_phase,
+                phase_coupling=phase_coupling,
+                valid_mask=valid_mask,
+            )
+        if valid_mask is None:
+            valid = np.ones((int(np.asarray(receiver_signature).shape[0]),), dtype=np.float32)
+        else:
+            valid = np.asarray(valid_mask, dtype=np.float32).reshape(-1)
+        jnp = jax_state["jnp"]
+        kernel = jax_state["kernel"]
+        r, s = kernel(
+            jnp.asarray(self.points, dtype=jnp.float32),
+            jnp.asarray(self.phase, dtype=jnp.float32),
+            jnp.asarray(self.energy, dtype=jnp.float32),
+            jnp.asarray(receiver_signature, dtype=jnp.float32),
+            jnp.asarray(resonance_width, dtype=jnp.float32),
+            jnp.asarray(receiver_phase, dtype=jnp.float32),
+            jnp.asarray(phase_coupling, dtype=jnp.float32),
+            jnp.asarray(valid, dtype=jnp.float32),
+        )
+        return np.asarray(r, dtype=np.float32), np.asarray(s, dtype=np.float32)
+
+    def read_many(
+        self,
+        receiver_signature: np.ndarray,
+        resonance_width: np.ndarray,
+        receiver_phase: np.ndarray,
+        phase_coupling: np.ndarray,
+        valid_mask: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        sig = np.asarray(receiver_signature, dtype=np.float32)
+        if sig.ndim != 2 or sig.shape[1] != int(self.cfg.gap_dim):
+            raise ValueError(
+                f"receiver_signature must have shape [N, {int(self.cfg.gap_dim)}], got {sig.shape}"
+            )
+        n = int(sig.shape[0])
+        widths = np.asarray(resonance_width, dtype=np.float32).reshape(-1)
+        rphase = np.asarray(receiver_phase, dtype=np.float32).reshape(-1)
+        pc = np.asarray(phase_coupling, dtype=np.float32).reshape(-1)
+        if widths.size != n or rphase.size != n or pc.size != n:
+            raise ValueError("batch read inputs must have matching leading dimension")
+        valid: np.ndarray | None = None
+        if valid_mask is not None:
+            valid = np.asarray(valid_mask, dtype=np.float32).reshape(-1)
+            if valid.size != n:
+                raise ValueError("valid_mask must match receiver batch size")
+        if self.read_backend == "jax":
+            return self._read_many_jax(sig, widths, rphase, pc, valid)
+        return self._read_many_numpy(sig, widths, rphase, pc, valid)
 
     def _weights(
         self,
@@ -3128,6 +4981,7 @@ class GapField:
         resonance_width: float,
         receiver_phase: float,
         phase_coupling: float,
+        include_contributions: bool = True,
     ) -> GapRead:
         active, w = self._weights(
             receiver_signature=receiver_signature,
@@ -3135,29 +4989,32 @@ class GapField:
             receiver_phase=receiver_phase,
             phase_coupling=phase_coupling,
         )
-        if w.size == 0 or float(np.sum(w)) <= 1e-9:
+        total_w = float(np.sum(w)) if w.size else 0.0
+        if w.size == 0 or total_w <= 1e-9:
             return GapRead(
                 resonance=np.zeros((self.cfg.gap_dim,), dtype=np.float32),
                 strength=0.0,
                 contributions={},
             )
         pts = self.points[active]
-        total_w = float(np.sum(w))
         resonance = np.sum(pts * w[:, None], axis=0) / max(total_w, 1e-9)
 
         active_energy = self.energy[active]
-        strength = float(np.sum(w) / max(np.sum(active_energy), 1e-9))
+        strength = float(total_w / max(np.sum(active_energy), 1e-9))
         strength = float(np.clip(strength, 0.0, 1.0))
 
-        emit = self.emitter_id[active]
-        contrib_raw: Dict[int, float] = {}
-        for eid, wi in zip(emit.tolist(), w.tolist()):
-            if eid < 0:
-                continue
-            contrib_raw[eid] = contrib_raw.get(eid, 0.0) + float(wi)
-        total = sum(contrib_raw.values())
-        if total > 1e-9:
-            contrib = {k: v / total for k, v in contrib_raw.items()}
+        if include_contributions:
+            emit = self.emitter_id[active]
+            contrib_raw: Dict[int, float] = {}
+            for eid, wi in zip(emit.tolist(), w.tolist()):
+                if eid < 0:
+                    continue
+                contrib_raw[eid] = contrib_raw.get(eid, 0.0) + float(wi)
+            total = sum(contrib_raw.values())
+            if total > 1e-9:
+                contrib = {k: v / total for k, v in contrib_raw.items()}
+            else:
+                contrib = {}
         else:
             contrib = {}
         return GapRead(
@@ -3187,17 +5044,9 @@ class GapField:
         mask = np.isin(self.emitter_id, np.fromiter(dead, dtype=np.int64))
         if not np.any(mask):
             return
-        self.energy[mask] = 0.0
-        self.velocity[mask] = 0.0
-        self.phase[mask] = 0.0
-        self.omega[mask] = 0.0
-        self.genome_fragment[mask] = -1
-        self.genome_len[mask] = 0
-        self.genome_weight[mask] = 0.0
-        self.ifs_fragment[mask] = 0.0
-        self.ifs_weight[mask] = 0.0
-        self.emitter_id[mask] = -1
-
+        for s in np.where(mask)[0].tolist():
+            self.clear_slot(int(s))
+-e 
 
 ===== genome.py =====
 from __future__ import annotations
@@ -3224,6 +5073,58 @@ def _identity_symbol_vocab(cfg: EmeraConfig) -> int:
     if cfg.token_space == "byte_parity":
         return 256
     return max(int(cfg.base_tokens), 1)
+
+
+_ROOT_IDENTITY_LEN = 2
+
+
+def _coerce_root_pair(
+    identity_bytes: np.ndarray | None,
+    vocab_size: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    vocab = max(int(vocab_size), 1)
+    raw = np.asarray(identity_bytes, dtype=np.int32).reshape(-1) if identity_bytes is not None else np.zeros((0,), dtype=np.int32)
+    if raw.size >= _ROOT_IDENTITY_LEN:
+        out = raw[:_ROOT_IDENTITY_LEN].copy()
+    elif raw.size == 1:
+        out = np.asarray([int(raw[0]), int(rng.integers(0, vocab))], dtype=np.int32)
+    else:
+        out = rng.integers(0, vocab, size=(_ROOT_IDENTITY_LEN,), dtype=np.int32)
+    return np.clip(out, 0, max(vocab - 1, 0)).astype(np.int32, copy=False)
+
+
+def _compose_recursive_lineage_identity(
+    parent_a: np.ndarray,
+    parent_b: np.ndarray,
+    max_len: int,
+    vocab_size: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    a = np.asarray(parent_a, dtype=np.int32).reshape(-1)
+    b = np.asarray(parent_b, dtype=np.int32).reshape(-1)
+    if a.size <= 0:
+        a = _coerce_root_pair(None, vocab_size, rng)
+    if b.size <= 0:
+        b = _coerce_root_pair(None, vocab_size, rng)
+    limit = max(2, int(max_len))
+    if int(a.size + b.size) <= limit:
+        out = np.concatenate([a, b], axis=0)
+    else:
+        keep_a = max(1, min(int(a.size), limit // 2))
+        keep_b = max(1, min(int(b.size), limit - keep_a))
+        rem = max(limit - keep_a - keep_b, 0)
+        if rem > 0:
+            room_a = max(int(a.size) - keep_a, 0)
+            add_a = min(rem, room_a)
+            keep_a += add_a
+            rem -= add_a
+        if rem > 0:
+            room_b = max(int(b.size) - keep_b, 0)
+            add_b = min(rem, room_b)
+            keep_b += add_b
+        out = np.concatenate([a[-keep_a:], b[:keep_b]], axis=0)
+    return np.clip(out[:limit], 0, max(int(vocab_size) - 1, 0)).astype(np.int32, copy=False)
 
 
 @dataclass
@@ -3368,15 +5269,7 @@ def make_initial_super_token(
     sig = _normalize(state[: cfg.gap_dim]).astype(np.float32)
     ifs = (_template_ifs(cfg) + rng.normal(0.0, cfg.ifs_mutation_scale, size=(cfg.num_ifs, 2, 3))).astype(np.float32)
     omega = float(cfg.omega_base + cfg.omega_jitter * rng.normal())
-    if identity_bytes is None:
-        l = int(rng.integers(1, cfg.proposal_lmax + 1))
-        vocab = _identity_symbol_vocab(cfg)
-        identity_bytes = rng.integers(0, vocab, size=(l,), dtype=np.int32)
-    ident = np.asarray(identity_bytes, dtype=np.int32).reshape(-1)
-    if ident.size == 0:
-        ident = np.asarray([32], dtype=np.int32)
-    vmax = _identity_symbol_vocab(cfg) - 1
-    ident = np.clip(ident, 0, max(vmax, 0))[: max(int(cfg.proposal_lmax), 1)].astype(np.int32)
+    ident = _coerce_root_pair(identity_bytes, _identity_symbol_vocab(cfg), rng)
     return SuperToken(
         token_id=int(token_id),
         parent_a=-1,
@@ -3537,31 +5430,23 @@ def mint_child_from_parents(
         for _ in range(8)
     ]
 
-    if identity_override is None:
-        ident = _mutate_identity_bytes(
-            parent_a=parent_a.identity_bytes,
-            parent_b=parent_b.identity_bytes,
-            max_len=cfg.proposal_lmax,
-            vocab_size=_identity_symbol_vocab(cfg),
-            rng=rng,
-        )
-    else:
-        ident = np.asarray(identity_override, dtype=np.int32).reshape(-1)
-        if ident.size == 0:
-            ident = _mutate_identity_bytes(
-                parent_a=parent_a.identity_bytes,
-                parent_b=parent_b.identity_bytes,
-                max_len=cfg.proposal_lmax,
-                vocab_size=_identity_symbol_vocab(cfg),
-                rng=rng,
-            )
-        else:
-            vmax = _identity_symbol_vocab(cfg) - 1
-            ident = np.clip(
-                ident[: max(int(cfg.proposal_lmax), 1)],
-                0,
-                max(vmax, 0),
-            ).astype(np.int32)
+    vocab = _identity_symbol_vocab(cfg)
+    ident = _compose_recursive_lineage_identity(
+        parent_a=parent_a.identity_bytes,
+        parent_b=parent_b.identity_bytes,
+        max_len=cfg.proposal_lmax,
+        vocab_size=vocab,
+        rng=rng,
+    )
+    if identity_override is not None:
+        ov = np.asarray(identity_override, dtype=np.int32).reshape(-1)
+        if ov.size > 0 and ident.size > 0:
+            ov = np.clip(ov, 0, max(vocab - 1, 0)).astype(np.int32, copy=False)
+            edits = max(1, min(int(ident.size // 4), int(ov.size)))
+            idx = np.asarray(rng.choice(int(ident.size), size=edits, replace=False), dtype=np.int32)
+            for j, pos in enumerate(idx.tolist()):
+                ident[pos] = int(ov[j % int(ov.size)])
+            ident = np.clip(ident, 0, max(vocab - 1, 0)).astype(np.int32, copy=False)
 
     return SuperToken(
         token_id=int(new_id),
@@ -3792,7 +5677,7 @@ def mint_child_from_parent(
         max_paid_bet=0.0,
         max_silent_correct=0,
     )
-
+-e 
 
 ===== identity.py =====
 from __future__ import annotations
@@ -3931,7 +5816,7 @@ def create_base_identity(cfg: EmeraConfig, rng: np.random.Generator) -> BaseIden
         phase0=phase0,
         omega0=omega0,
     )
-
+-e 
 
 ===== ledger.py =====
 from __future__ import annotations
@@ -4021,13 +5906,14 @@ def realized_return(
     base: float,
 ) -> float:
     return float(jackpot - total_attempt_cost - discovery - base)
-
+-e 
 
 ===== metrics.py =====
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Dict, List
+import math
 
 
 @dataclass
@@ -4035,46 +5921,127 @@ class MetricsTracker:
     steps: int = 0
     cumulative_distance: int = 0
     cumulative_predicted_advance: int = 0
+    cumulative_raw_predicted_advance: int = 0
+    cumulative_contextual_predicted_advance: int = 0
+    cumulative_proposed_tokens: int = 0
     cumulative_discovery_advance: int = 0
     cumulative_energy_spent: float = 0.0
     cumulative_net_return: float = 0.0
     cumulative_payout: float = 0.0
     cumulative_births: int = 0
     cumulative_deaths: int = 0
+    cumulative_nontrivial_matches: int = 0
+    cumulative_full_matches: int = 0
+    max_symbio_depth: int = 0
+    last_gap_compression_ratio: float = 1.0
+    best_gap_compression_ratio: float = float("inf")
+    last_root_only_fraction: float = 1.0
+    last_nonroot_live_capsules: int = 0
+    last_capsule_half_life: float = 0.0
+    last_lineage_persistence_1k: float = 0.0
+    last_chaos_energy_spent: float = 0.0
+    last_chaos_avg_substeps: float = 0.0
     last_events: List[str] = field(default_factory=list)
 
     def update(self, step_stats: Dict[str, float | int], events: list[str]) -> None:
         self.steps += 1
-        self.cumulative_distance += int(step_stats.get("advance_len", 0))
-        self.cumulative_predicted_advance += int(step_stats.get("match_len", 0))
+        adv = int(step_stats.get("advance_len", 0))
+        match = int(step_stats.get("match_len", 0))
+        p_len = int(step_stats.get("proposal_len", 0))
+        rescue_winner = bool(int(step_stats.get("winner_from_frontier_rescue", 0)))
+        match_for_glide = 0 if rescue_winner else match
+        self.cumulative_distance += adv
+        self.cumulative_raw_predicted_advance += match
+        self.cumulative_predicted_advance += match_for_glide
+        self.cumulative_contextual_predicted_advance += max(match_for_glide - 1, 0)
+        self.cumulative_proposed_tokens += max(p_len, 0)
         self.cumulative_discovery_advance += int(step_stats.get("discovery_advance", 0))
         self.cumulative_energy_spent += float(step_stats.get("energy_spent", 0.0))
         self.cumulative_net_return += float(step_stats.get("realized_return", 0.0))
         self.cumulative_payout += float(step_stats.get("jackpot", 0.0))
         self.cumulative_births += int(step_stats.get("births", 0))
         self.cumulative_deaths += int(step_stats.get("deaths", 0))
+        if match_for_glide >= 2:
+            self.cumulative_nontrivial_matches += 1
+        if p_len > 0 and match_for_glide == p_len:
+            self.cumulative_full_matches += 1
+        self.max_symbio_depth = max(
+            self.max_symbio_depth, int(step_stats.get("max_symbio_depth", 0))
+        )
+        gcr = float(
+            step_stats.get("gap_compression_ratio", self.last_gap_compression_ratio)
+        )
+        if not math.isfinite(gcr):
+            gcr = self.last_gap_compression_ratio
+        self.last_gap_compression_ratio = gcr
+        self.best_gap_compression_ratio = min(self.best_gap_compression_ratio, gcr)
+        self.last_root_only_fraction = float(
+            step_stats.get("root_only_fraction", self.last_root_only_fraction)
+        )
+        self.last_nonroot_live_capsules = int(
+            step_stats.get("nonroot_live_capsules", self.last_nonroot_live_capsules)
+        )
+        self.last_capsule_half_life = float(
+            step_stats.get("capsule_half_life", self.last_capsule_half_life)
+        )
+        self.last_lineage_persistence_1k = float(
+            step_stats.get("lineage_persistence_1k", self.last_lineage_persistence_1k)
+        )
+        self.last_chaos_energy_spent = float(
+            step_stats.get("chaos_energy_spent", self.last_chaos_energy_spent)
+        )
+        self.last_chaos_avg_substeps = float(
+            step_stats.get("chaos_avg_substeps", self.last_chaos_avg_substeps)
+        )
         if events:
             self.last_events.extend(events)
             self.last_events = self.last_events[-16:]
 
     def snapshot(self) -> dict:
         distance = max(float(self.cumulative_distance), 1.0)
+        proposed = max(float(self.cumulative_proposed_tokens), 1.0)
+        steps = max(float(self.steps), 1.0)
         return {
             "steps": self.steps,
             "distance": self.cumulative_distance,
             "predicted_advance": self.cumulative_predicted_advance,
+            "raw_predicted_advance": self.cumulative_raw_predicted_advance,
+            "contextual_predicted_advance": self.cumulative_contextual_predicted_advance,
+            "proposed_tokens": self.cumulative_proposed_tokens,
             "discovery_advance": self.cumulative_discovery_advance,
             "energy_spent": self.cumulative_energy_spent,
             "net_return": self.cumulative_net_return,
             "payout_total": self.cumulative_payout,
             "energy_per_advance": self.cumulative_energy_spent / distance,
-            "glide_ratio": self.cumulative_predicted_advance / distance,
+            # Strict glide: only counts predictive advance beyond trivial 1-token wins.
+            "glide_ratio": self.cumulative_contextual_predicted_advance / distance,
+            # Legacy glide for debugging/compatibility.
+            "token_glide_ratio": self.cumulative_raw_predicted_advance / distance,
+            "proposal_efficiency": self.cumulative_raw_predicted_advance / proposed,
+            "contextual_efficiency": self.cumulative_contextual_predicted_advance
+            / proposed,
+            "avg_proposal_len": self.cumulative_proposed_tokens / steps,
+            "nontrivial_match_rate": self.cumulative_nontrivial_matches / steps,
+            "full_match_rate": self.cumulative_full_matches / steps,
             "discovery_fraction": self.cumulative_discovery_advance / distance,
             "births_total": self.cumulative_births,
             "deaths_total": self.cumulative_deaths,
+            "max_symbio_depth": int(self.max_symbio_depth),
+            "gap_compression_ratio": float(self.last_gap_compression_ratio),
+            "best_gap_compression_ratio": float(
+                self.best_gap_compression_ratio
+                if math.isfinite(self.best_gap_compression_ratio)
+                else self.last_gap_compression_ratio
+            ),
+            "root_only_fraction": float(self.last_root_only_fraction),
+            "nonroot_live_capsules": int(self.last_nonroot_live_capsules),
+            "capsule_half_life": float(self.last_capsule_half_life),
+            "lineage_persistence_1k": float(self.last_lineage_persistence_1k),
+            "chaos_energy_spent": float(self.last_chaos_energy_spent),
+            "chaos_avg_substeps": float(self.last_chaos_avg_substeps),
             "last_events": list(self.last_events[-8:]),
         }
-
+-e 
 
 ===== run.py =====
 #!/usr/bin/env python3
@@ -4106,8 +6073,13 @@ def build_config_from_args(args: argparse.Namespace) -> EmeraConfig:
         "d_latent",
         "gap_dim",
         "gap_len",
+        "gap_read_backend",
+        "gap_read_batch_size",
         "num_ifs",
         "chaos_substeps_per_round",
+        "chaos_min_substeps",
+        "chaos_max_substeps",
+        "chaos_substep_cost",
         "k_rounds",
         "proposal_lmax",
         "obligatory_proposals",
@@ -4142,9 +6114,13 @@ def build_config_from_args(args: argparse.Namespace) -> EmeraConfig:
         "energy_reservoir_init",
         "energy_reservoir_cap",
         "spawn_cost",
+        "mint_parent_contrib_frac",
+        "capsule_frontier_window",
+        "capsule_mint_parent_pool",
         "self_copy_enabled",
         "self_copy_interval",
         "self_copy_cost",
+        "self_copy_parent_contrib_frac",
         "self_copy_min_energy",
         "self_copy_min_match_frac",
         "self_copy_min_score",
@@ -4161,6 +6137,7 @@ def build_config_from_args(args: argparse.Namespace) -> EmeraConfig:
         "season_wave_decay",
         "season_revival_spores",
         "season_revival_energy",
+        "season_topology_jitter",
         "log_every",
     ]:
         val = getattr(args, key, None)
@@ -4180,6 +6157,7 @@ def format_step_line(stats: dict, snapshot: dict) -> str:
     return (
         f"step={stats['step']} active={stats['active_super']} proposers={stats['proposers']} "
         f"rescue={stats.get('frontier_rescue_spawned', 0)} "
+        f"rescue_win={stats.get('winner_from_frontier_rescue', 0)} "
         f"win={stats['winner_id']} conf={stats['winner_conf']:.3f} len={stats['proposal_len']} "
         f"super_token_len={stats.get('winner_super_token_len', 0)} "
         f"match={stats['match_len']} adv={stats['advance_len']} "
@@ -4193,6 +6171,13 @@ def format_step_line(stats: dict, snapshot: dict) -> str:
         f"sp={stats['law_spawn_cost']:.3f},pa={stats['law_pareto_alpha']:.2f}) "
         f"reservoir={stats.get('reservoir', 0.0):.2f} drift={stats.get('energy_drift', 0.0):+.4f} "
         f"EPA={snapshot['energy_per_advance']:.4f} glide={snapshot['glide_ratio']:.3f} "
+        f"tok_glide={snapshot.get('token_glide_ratio', snapshot['glide_ratio']):.3f} "
+        f"gap_cr={snapshot.get('gap_compression_ratio', 1.0):.3f} "
+        f"depth={int(snapshot.get('max_symbio_depth', 0))} "
+        f"root_frac={snapshot.get('root_only_fraction', 1.0):.3f} "
+        f"caps_nonroot={int(snapshot.get('nonroot_live_capsules', 0))} "
+        f"caps_t1k={snapshot.get('lineage_persistence_1k', 0.0):.3f} "
+        f"chaos_sub={snapshot.get('chaos_avg_substeps', 0.0):.1f} "
         f"payout_tot={snapshot.get('payout_total', 0.0):.3f}"
     )
 
@@ -4218,7 +6203,9 @@ def _token_age(engine: EmeraEngine, token) -> int:
     return max(int(engine.step_idx) - int(getattr(token, "birth_step", 0)), 0)
 
 
-def _format_feature_line(engine: EmeraEngine, label: str, token, metric: str, max_chars: int) -> str:
+def _format_feature_line(
+    engine: EmeraEngine, label: str, token, metric: str, max_chars: int
+) -> str:
     age = _token_age(engine, token)
     rs = float(engine.last_resonance_strength.get(token.token_id, 0.0))
     _, conf, _ = engine._raw_decode_for_token(token, rs)
@@ -4236,7 +6223,9 @@ def _format_feature_line(engine: EmeraEngine, label: str, token, metric: str, ma
     )
 
 
-def format_feature_lines(engine: EmeraEngine, stats: dict, k: int, max_chars: int) -> list[str]:
+def format_feature_lines(
+    engine: EmeraEngine, stats: dict, k: int, max_chars: int
+) -> list[str]:
     if k <= 0 or not engine.super_tokens:
         return []
     tokens = list(engine.super_tokens.values())
@@ -4286,7 +6275,9 @@ def format_feature_lines(engine: EmeraEngine, stats: dict, k: int, max_chars: in
     else:
         out.append("  feat longest_silent_activated_turn none")
 
-    oldest = max(tokens, key=lambda t: (_token_age(engine, t), float(t.energy), -int(t.token_id)))
+    oldest = max(
+        tokens, key=lambda t: (_token_age(engine, t), float(t.energy), -int(t.token_id))
+    )
     out.append(
         _format_feature_line(
             engine,
@@ -4320,7 +6311,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Emera v2 prototype runner")
     p.add_argument("--steps", type=int, default=5_000)
     p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--token-space", type=str, choices=["byte_parity", "gpt2"], default=None)
+    p.add_argument(
+        "--token-space", type=str, choices=["byte_parity", "gpt2"], default=None
+    )
     p.add_argument("--gpt2-model-name", type=str, default=None)
     p.add_argument("--base-tokens", type=int, default=None)
     p.add_argument("--log-every", type=int, default=None)
@@ -4331,11 +6324,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--d-latent", type=int, default=None)
     p.add_argument("--gap-dim", type=int, default=None)
     p.add_argument("--gap-len", type=int, default=None)
+    p.add_argument(
+        "--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default=None
+    )
+    p.add_argument("--gap-read-batch-size", type=int, default=None)
     p.add_argument("--num-ifs", type=int, default=None)
     p.add_argument("--chaos-substeps-per-round", type=int, default=None)
+    p.add_argument("--chaos-min-substeps", type=int, default=None)
+    p.add_argument("--chaos-max-substeps", type=int, default=None)
+    p.add_argument("--chaos-substep-cost", type=float, default=None)
     p.add_argument("--k-rounds", type=int, default=None)
     p.add_argument("--proposal-lmax", type=int, default=None)
-    p.add_argument("--obligatory-proposals", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument(
+        "--obligatory-proposals",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--proposal-min-bet", type=float, default=None)
     p.add_argument("--proposal-bet-unit-scale", type=float, default=None)
     p.add_argument("--proposal-bet-max-energy-frac", type=float, default=None)
@@ -4346,7 +6350,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--frontier-rescue-energy", type=float, default=None)
     p.add_argument("--frontier-rescue-noise", type=float, default=None)
     p.add_argument("--frontier-rescue-max-per-step", type=int, default=None)
-    p.add_argument("--contrastive-enabled", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument(
+        "--contrastive-enabled",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--contrastive-correct-reward", type=float, default=None)
     p.add_argument("--contrastive-wrong-penalty", type=float, default=None)
     p.add_argument("--contrastive-wrong-exp", type=float, default=None)
@@ -4361,15 +6369,31 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--survivor-grace-steps", type=int, default=None)
     p.add_argument("--survivor-relief-active-frac", type=float, default=None)
     p.add_argument("--survivor-relief-reservoir-frac", type=float, default=None)
-    p.add_argument("--conserve-total-energy", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
-    p.add_argument("--strict-energy-budget", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument(
+        "--conserve-total-energy",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
+    p.add_argument(
+        "--strict-energy-budget",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--energy-inflow-per-step", type=float, default=None)
     p.add_argument("--energy-reservoir-init", type=float, default=None)
     p.add_argument("--energy-reservoir-cap", type=float, default=None)
     p.add_argument("--spawn-cost", type=float, default=None)
-    p.add_argument("--self-copy-enabled", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument("--mint-parent-contrib-frac", type=float, default=None)
+    p.add_argument("--capsule-frontier-window", type=int, default=None)
+    p.add_argument("--capsule-mint-parent-pool", type=int, default=None)
+    p.add_argument(
+        "--self-copy-enabled",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--self-copy-interval", type=int, default=None)
     p.add_argument("--self-copy-cost", type=float, default=None)
+    p.add_argument("--self-copy-parent-contrib-frac", type=float, default=None)
     p.add_argument("--self-copy-min-energy", type=float, default=None)
     p.add_argument("--self-copy-min-match-frac", type=float, default=None)
     p.add_argument("--self-copy-min-score", type=float, default=None)
@@ -4377,7 +6401,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mint-interval", type=int, default=None)
     p.add_argument("--mint-delta", type=float, default=None)
     p.add_argument("--ema-alpha", type=float, default=None)
-    p.add_argument("--dynamic-laws", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument(
+        "--dynamic-laws",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--law-update-interval", type=int, default=None)
     p.add_argument("--adaptation-rate", type=float, default=None)
     p.add_argument("--adaptation-signal-decay", type=float, default=None)
@@ -4386,6 +6414,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--season-wave-decay", type=float, default=None)
     p.add_argument("--season-revival-spores", type=int, default=None)
     p.add_argument("--season-revival-energy", type=float, default=None)
+    p.add_argument("--season-topology-jitter", type=float, default=None)
     p.add_argument("--log-oldest-k", type=int, default=3)
     p.add_argument("--log-oldest-max-chars", type=int, default=18)
     p.add_argument("--output-json", type=str, default=None)
@@ -4417,7 +6446,8 @@ def main() -> None:
     t0 = time.time()
     print(
         f"Emera v2 start | seed={cfg.seed} | world_len={engine.world.length} | "
-        f"initial_super={len(engine.super_tokens)} | k_rounds={cfg.k_rounds}"
+        f"initial_super={len(engine.super_tokens)} | k_rounds={cfg.k_rounds} | "
+        f"gap_backend={engine.gap.read_backend} | gap_batch={cfg.gap_read_batch_size}"
     )
 
     log_every = cfg.log_every
@@ -4427,7 +6457,9 @@ def main() -> None:
             snap = engine.metrics.snapshot()
             print(format_step_line(result.stats, snap))
             if locator is not None:
-                line = locator.line_at_token_index(int(result.stats.get("cursor", engine.world.cursor)))
+                line = locator.line_at_token_index(
+                    int(result.stats.get("cursor", engine.world.cursor))
+                )
                 print(f"  text: {line}")
             for line in format_feature_lines(
                 engine=engine,
@@ -4450,6 +6482,10 @@ def main() -> None:
     print(
         f"done steps={args.steps} elapsed={elapsed:.2f}s active={final['active_super']} "
         f"EPA={snap['energy_per_advance']:.4f} glide={snap['glide_ratio']:.3f} "
+        f"tok_glide={snap.get('token_glide_ratio', snap['glide_ratio']):.3f} "
+        f"gap_cr={snap.get('gap_compression_ratio', 1.0):.3f} "
+        f"depth={int(snap.get('max_symbio_depth', 0))} "
+        f"root_frac={snap.get('root_only_fraction', 1.0):.3f} "
         f"births={snap['births_total']} deaths={snap['deaths_total']}"
     )
 
@@ -4462,7 +6498,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
+-e 
 
 ===== specs.md =====
 # Emera v2 Specification
@@ -4826,7 +6862,7 @@ Secondary:
 ## 17. First Implementation Task
 
 Implement M0+M1 in one runnable loop with logging every N steps, then add M2 minting logic exactly as specified above.
-
+-e 
 
 ===== world.py =====
 from __future__ import annotations
@@ -4994,5 +7030,5 @@ class World:
         freqs = self.counts[np.clip(arr, 0, self.counts.size - 1)]
         idf = np.log((n + self.counts.size) / (freqs + 1.0)) / denom
         return float(np.clip(np.mean(idf), 0.0, 2.0))
-
+-e 
 

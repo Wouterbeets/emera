@@ -55,7 +55,7 @@ class EmeraConfig:
     proposal_bet_conf_gain: float = 8.0
     proposal_frontier_contrast: int = 16
     proposal_frontier_fallback: int = 32
-    frontier_rescue_energy: float = 0.888
+    frontier_rescue_energy: float = 0.55
     frontier_rescue_noise: float = 0.04
     frontier_rescue_max_per_step: int = 1
     contrastive_enabled: bool = True
@@ -107,18 +107,20 @@ class EmeraConfig:
     jackpot_silence_scale: float = 0.40
 
     # Symbiogenesis
-    spawn_cost: float = 0.85
-    mint_interval: int = 12
-    mint_delta: float = -0.08
+    spawn_cost: float = 0.45
+    mint_interval: int = 6
+    mint_delta: float = -0.20
+    mint_parent_contrib_frac: float = 0.35
     capsule_frontier_window: int = 48
     capsule_mint_parent_pool: int = 10
-    self_copy_enabled: bool = False
-    self_copy_interval: int = 5
-    self_copy_cost: float = 0.50
-    self_copy_min_energy: float = 1.20
-    self_copy_min_match_frac: float = 1.00
+    self_copy_enabled: bool = True
+    self_copy_interval: int = 3
+    self_copy_cost: float = 0.30
+    self_copy_parent_contrib_frac: float = 0.35
+    self_copy_min_energy: float = 0.80
+    self_copy_min_match_frac: float = 0.50
     self_copy_min_score: float = 0.0
-    self_copy_max_per_step: int = 1
+    self_copy_max_per_step: int = 2
     ema_alpha: float = 0.02
     mutation_scale: float = 0.08
     ifs_mutation_scale: float = 0.03
@@ -131,8 +133,8 @@ class EmeraConfig:
     pareto_clip: float = 12.0
 
     # Reward split for child success
-    child_reward_share: float = 0.60
-    parent_reward_share: float = 0.18
+    child_reward_share: float = 0.72
+    parent_reward_share: float = 0.10
 
     # Adaptive natural laws (environment-driven)
     dynamic_laws: bool = True
@@ -242,6 +244,8 @@ class EmeraConfig:
             raise ValueError("initial_super_tokens must be >= 1.")
         if self.spawn_cost <= 0:
             raise ValueError("spawn_cost must be > 0.")
+        if not (0.0 <= self.mint_parent_contrib_frac <= 1.0):
+            raise ValueError("mint_parent_contrib_frac must be in [0, 1].")
         if self.capsule_frontier_window < 1:
             raise ValueError("capsule_frontier_window must be >= 1.")
         if self.capsule_frontier_window > self.gap_len:
@@ -252,6 +256,8 @@ class EmeraConfig:
             raise ValueError("self_copy_interval must be >= 1.")
         if self.self_copy_cost <= 0.0:
             raise ValueError("self_copy_cost must be > 0.")
+        if not (0.0 <= self.self_copy_parent_contrib_frac <= 1.0):
+            raise ValueError("self_copy_parent_contrib_frac must be in [0, 1].")
         if self.self_copy_min_energy < 0.0:
             raise ValueError("self_copy_min_energy must be >= 0.")
         if not (0.0 <= self.self_copy_min_match_frac <= 1.0):

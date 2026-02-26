@@ -68,11 +68,13 @@ def build_config_from_args(args: argparse.Namespace) -> EmeraConfig:
         "energy_reservoir_init",
         "energy_reservoir_cap",
         "spawn_cost",
+        "mint_parent_contrib_frac",
         "capsule_frontier_window",
         "capsule_mint_parent_pool",
         "self_copy_enabled",
         "self_copy_interval",
         "self_copy_cost",
+        "self_copy_parent_contrib_frac",
         "self_copy_min_energy",
         "self_copy_min_match_frac",
         "self_copy_min_score",
@@ -335,6 +337,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--energy-reservoir-init", type=float, default=None)
     p.add_argument("--energy-reservoir-cap", type=float, default=None)
     p.add_argument("--spawn-cost", type=float, default=None)
+    p.add_argument("--mint-parent-contrib-frac", type=float, default=None)
     p.add_argument("--capsule-frontier-window", type=int, default=None)
     p.add_argument("--capsule-mint-parent-pool", type=int, default=None)
     p.add_argument(
@@ -344,6 +347,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--self-copy-interval", type=int, default=None)
     p.add_argument("--self-copy-cost", type=float, default=None)
+    p.add_argument("--self-copy-parent-contrib-frac", type=float, default=None)
     p.add_argument("--self-copy-min-energy", type=float, default=None)
     p.add_argument("--self-copy-min-match-frac", type=float, default=None)
     p.add_argument("--self-copy-min-score", type=float, default=None)

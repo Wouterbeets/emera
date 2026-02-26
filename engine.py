@@ -1477,6 +1477,8 @@ class EmeraEngine:
             return 0, []
 
         copy_cost = float(cfg.self_copy_cost)
+        parent_contrib_frac = float(np.clip(cfg.self_copy_parent_contrib_frac, 0.0, 1.0))
+        parent_contrib = copy_cost * parent_contrib_frac
         min_energy = float(cfg.self_copy_min_energy)
         min_match_frac = float(cfg.self_copy_min_match_frac)
         min_score = float(cfg.self_copy_min_score)
@@ -1506,13 +1508,16 @@ class EmeraEngine:
             score = float(evals.get("score", 0.0))
             if match_frac < min_match_frac or score < min_score:
                 continue
-            if float(parent.energy) < (min_energy + copy_cost):
+            if float(parent.energy) < (min_energy + parent_contrib):
                 continue
 
-            paid = self._drain_token_energy(parent, copy_cost)
-            if paid <= 1e-8:
+            if parent_contrib > 0.0:
+                paid = self._drain_token_energy(parent, parent_contrib)
+            else:
+                paid = 0.0
+            if parent_contrib > 0.0 and paid <= 1e-8:
                 continue
-            child_energy = self._reservoir_take(paid)
+            child_energy = self._reservoir_take(copy_cost)
             if child_energy <= 1e-8:
                 continue
 
@@ -1553,6 +1558,7 @@ class EmeraEngine:
             births += 1
             events.append(
                 f"copy {child.token_id} <- {parent.token_id} score={score:.3f} match={mlen}/{plen} "
+                f"parent_pay={paid:.3f}/{copy_cost:.3f} "
                 f"gap_genome={1 if gap_ident is not None else 0} glen={int(gap_ident.size) if gap_ident is not None else 0} "
                 f"gap_ifs={1 if gap_ifs is not None else 0}"
             )
@@ -1564,7 +1570,8 @@ class EmeraEngine:
         events: list[str] = []
         spawn_cost = float(self.laws["spawn_cost"])
         mint_delta = float(self.laws["mint_delta"])
-        half_spawn = 0.5 * spawn_cost
+        parent_contrib_frac = float(np.clip(self.cfg.mint_parent_contrib_frac, 0.0, 1.0))
+        half_spawn = 0.5 * spawn_cost * parent_contrib_frac
         local_slots = self._frontier_local_slots()
         if local_slots.size <= 0:
             return births, events
@@ -1581,6 +1588,21 @@ class EmeraEngine:
             mass = float(np.clip(self.gap.energy[s], 0.0, self.cfg.token_energy_cap))
             mass *= 0.25 + 0.75 * float(np.clip(self.gap.genome_weight[s], 0.0, 1.0))
             local_mass[tid] = local_mass.get(tid, 0.0) + mass
+        if len(local_mass) < 2:
+            # Fallback to global capsule anchors so minting does not stall when
+            # the frontier neighborhood becomes sparse.
+            for tid, slot in self.token_anchor_slot.items():
+                tok = self.super_tokens.get(int(tid))
+                if tok is None:
+                    continue
+                s = int(slot)
+                if s < 0 or s >= int(self.cfg.gap_len):
+                    continue
+                mass = float(np.clip(self.gap.energy[s], 0.0, self.cfg.token_energy_cap))
+                if mass <= 0.0:
+                    continue
+                mass *= 0.25 + 0.75 * float(np.clip(self.gap.genome_weight[s], 0.0, 1.0))
+                local_mass[int(tid)] = local_mass.get(int(tid), 0.0) + mass
         if len(local_mass) < 2:
             return births, events
 
@@ -1600,6 +1622,12 @@ class EmeraEngine:
                 pair_score = substrate + 0.6 * syn
                 pair_candidates.append((pair_score, a_id, b_id, syn))
         pair_candidates.sort(key=lambda x: x[0], reverse=True)
+        nonroot_live = sum(
+            1
+            for tid in self.super_tokens.keys()
+            if int(self.lineage_depth.get(int(tid), 0)) > 0
+        )
+        collapse_mode = bool(nonroot_live <= 0)
 
         for _, a_id, b_id, syn in pair_candidates:
             if births >= 2:
@@ -1614,11 +1642,27 @@ class EmeraEngine:
             substrate_boost = 0.05 * float(
                 np.log1p(local_mass.get(a_id, 0.0) + local_mass.get(b_id, 0.0))
             ) + 0.08 * float(syn)
-            if (r_ab + substrate_boost) <= max(r_a, r_b) + mint_delta:
-                continue
+            merit = (r_ab + substrate_boost) - (max(r_a, r_b) + mint_delta)
+            exploratory = False
+            if merit <= 0.0:
+                if not collapse_mode:
+                    continue
+                # Lineage rescue: when ecology collapses to roots, allow occasional
+                # exploratory pair births from the strongest local pairs.
+                if births > 0:
+                    continue
+                excite = float(np.log1p(local_mass.get(a_id, 0.0) + local_mass.get(b_id, 0.0)))
+                p_explore = float(np.clip(0.20 + 0.12 * excite + 0.10 * syn, 0.20, 0.55))
+                if self.rng.random() > p_explore:
+                    continue
+                exploratory = True
 
-            self._drain_token_energy(a, half_spawn)
-            self._drain_token_energy(b, half_spawn)
+            if half_spawn > 0.0:
+                paid_a = self._drain_token_energy(a, half_spawn)
+                paid_b = self._drain_token_energy(b, half_spawn)
+            else:
+                paid_a = 0.0
+                paid_b = 0.0
             child_energy = self._reservoir_take(spawn_cost)
             if child_energy <= 1e-8:
                 continue
@@ -1660,6 +1704,8 @@ class EmeraEngine:
             births += 1
             events.append(
                 f"mint {child.token_id} <- ({a_id},{b_id}) syn={syn:.3f} local={local_mass.get(a_id, 0.0) + local_mass.get(b_id, 0.0):.3f} "
+                f"parent_pay={paid_a+paid_b:.3f}/{spawn_cost:.3f} "
+                f"explore={1 if exploratory else 0} merit={merit:.3f} "
                 f"ab={r_ab:.3f} a={r_a:.3f} b={r_b:.3f} "
                 f"gap_genome={1 if gap_ident is not None else 0} glen={int(gap_ident.size) if gap_ident is not None else 0} "
                 f"gap_ifs={1 if gap_ifs is not None else 0}"
