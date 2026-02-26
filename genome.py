@@ -24,6 +24,58 @@ def _identity_symbol_vocab(cfg: EmeraConfig) -> int:
     return max(int(cfg.base_tokens), 1)
 
 
+_ROOT_IDENTITY_LEN = 2
+
+
+def _coerce_root_pair(
+    identity_bytes: np.ndarray | None,
+    vocab_size: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    vocab = max(int(vocab_size), 1)
+    raw = np.asarray(identity_bytes, dtype=np.int32).reshape(-1) if identity_bytes is not None else np.zeros((0,), dtype=np.int32)
+    if raw.size >= _ROOT_IDENTITY_LEN:
+        out = raw[:_ROOT_IDENTITY_LEN].copy()
+    elif raw.size == 1:
+        out = np.asarray([int(raw[0]), int(rng.integers(0, vocab))], dtype=np.int32)
+    else:
+        out = rng.integers(0, vocab, size=(_ROOT_IDENTITY_LEN,), dtype=np.int32)
+    return np.clip(out, 0, max(vocab - 1, 0)).astype(np.int32, copy=False)
+
+
+def _compose_recursive_lineage_identity(
+    parent_a: np.ndarray,
+    parent_b: np.ndarray,
+    max_len: int,
+    vocab_size: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    a = np.asarray(parent_a, dtype=np.int32).reshape(-1)
+    b = np.asarray(parent_b, dtype=np.int32).reshape(-1)
+    if a.size <= 0:
+        a = _coerce_root_pair(None, vocab_size, rng)
+    if b.size <= 0:
+        b = _coerce_root_pair(None, vocab_size, rng)
+    limit = max(2, int(max_len))
+    if int(a.size + b.size) <= limit:
+        out = np.concatenate([a, b], axis=0)
+    else:
+        keep_a = max(1, min(int(a.size), limit // 2))
+        keep_b = max(1, min(int(b.size), limit - keep_a))
+        rem = max(limit - keep_a - keep_b, 0)
+        if rem > 0:
+            room_a = max(int(a.size) - keep_a, 0)
+            add_a = min(rem, room_a)
+            keep_a += add_a
+            rem -= add_a
+        if rem > 0:
+            room_b = max(int(b.size) - keep_b, 0)
+            add_b = min(rem, room_b)
+            keep_b += add_b
+        out = np.concatenate([a[-keep_a:], b[:keep_b]], axis=0)
+    return np.clip(out[:limit], 0, max(int(vocab_size) - 1, 0)).astype(np.int32, copy=False)
+
+
 @dataclass
 class Proposal:
     token_id: int
@@ -166,15 +218,7 @@ def make_initial_super_token(
     sig = _normalize(state[: cfg.gap_dim]).astype(np.float32)
     ifs = (_template_ifs(cfg) + rng.normal(0.0, cfg.ifs_mutation_scale, size=(cfg.num_ifs, 2, 3))).astype(np.float32)
     omega = float(cfg.omega_base + cfg.omega_jitter * rng.normal())
-    if identity_bytes is None:
-        l = int(rng.integers(1, cfg.proposal_lmax + 1))
-        vocab = _identity_symbol_vocab(cfg)
-        identity_bytes = rng.integers(0, vocab, size=(l,), dtype=np.int32)
-    ident = np.asarray(identity_bytes, dtype=np.int32).reshape(-1)
-    if ident.size == 0:
-        ident = np.asarray([32], dtype=np.int32)
-    vmax = _identity_symbol_vocab(cfg) - 1
-    ident = np.clip(ident, 0, max(vmax, 0))[: max(int(cfg.proposal_lmax), 1)].astype(np.int32)
+    ident = _coerce_root_pair(identity_bytes, _identity_symbol_vocab(cfg), rng)
     return SuperToken(
         token_id=int(token_id),
         parent_a=-1,
@@ -335,31 +379,23 @@ def mint_child_from_parents(
         for _ in range(8)
     ]
 
-    if identity_override is None:
-        ident = _mutate_identity_bytes(
-            parent_a=parent_a.identity_bytes,
-            parent_b=parent_b.identity_bytes,
-            max_len=cfg.proposal_lmax,
-            vocab_size=_identity_symbol_vocab(cfg),
-            rng=rng,
-        )
-    else:
-        ident = np.asarray(identity_override, dtype=np.int32).reshape(-1)
-        if ident.size == 0:
-            ident = _mutate_identity_bytes(
-                parent_a=parent_a.identity_bytes,
-                parent_b=parent_b.identity_bytes,
-                max_len=cfg.proposal_lmax,
-                vocab_size=_identity_symbol_vocab(cfg),
-                rng=rng,
-            )
-        else:
-            vmax = _identity_symbol_vocab(cfg) - 1
-            ident = np.clip(
-                ident[: max(int(cfg.proposal_lmax), 1)],
-                0,
-                max(vmax, 0),
-            ).astype(np.int32)
+    vocab = _identity_symbol_vocab(cfg)
+    ident = _compose_recursive_lineage_identity(
+        parent_a=parent_a.identity_bytes,
+        parent_b=parent_b.identity_bytes,
+        max_len=cfg.proposal_lmax,
+        vocab_size=vocab,
+        rng=rng,
+    )
+    if identity_override is not None:
+        ov = np.asarray(identity_override, dtype=np.int32).reshape(-1)
+        if ov.size > 0 and ident.size > 0:
+            ov = np.clip(ov, 0, max(vocab - 1, 0)).astype(np.int32, copy=False)
+            edits = max(1, min(int(ident.size // 4), int(ov.size)))
+            idx = np.asarray(rng.choice(int(ident.size), size=edits, replace=False), dtype=np.int32)
+            for j, pos in enumerate(idx.tolist()):
+                ident[pos] = int(ov[j % int(ov.size)])
+            ident = np.clip(ident, 0, max(vocab - 1, 0)).astype(np.int32, copy=False)
 
     return SuperToken(
         token_id=int(new_id),

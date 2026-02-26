@@ -31,6 +31,9 @@ def build_config_from_args(args: argparse.Namespace) -> EmeraConfig:
         "gap_read_batch_size",
         "num_ifs",
         "chaos_substeps_per_round",
+        "chaos_min_substeps",
+        "chaos_max_substeps",
+        "chaos_substep_cost",
         "k_rounds",
         "proposal_lmax",
         "obligatory_proposals",
@@ -65,6 +68,8 @@ def build_config_from_args(args: argparse.Namespace) -> EmeraConfig:
         "energy_reservoir_init",
         "energy_reservoir_cap",
         "spawn_cost",
+        "capsule_frontier_window",
+        "capsule_mint_parent_pool",
         "self_copy_enabled",
         "self_copy_interval",
         "self_copy_cost",
@@ -84,6 +89,7 @@ def build_config_from_args(args: argparse.Namespace) -> EmeraConfig:
         "season_wave_decay",
         "season_revival_spores",
         "season_revival_energy",
+        "season_topology_jitter",
         "log_every",
     ]:
         val = getattr(args, key, None)
@@ -121,6 +127,9 @@ def format_step_line(stats: dict, snapshot: dict) -> str:
         f"gap_cr={snapshot.get('gap_compression_ratio', 1.0):.3f} "
         f"depth={int(snapshot.get('max_symbio_depth', 0))} "
         f"root_frac={snapshot.get('root_only_fraction', 1.0):.3f} "
+        f"caps_nonroot={int(snapshot.get('nonroot_live_capsules', 0))} "
+        f"caps_t1k={snapshot.get('lineage_persistence_1k', 0.0):.3f} "
+        f"chaos_sub={snapshot.get('chaos_avg_substeps', 0.0):.1f} "
         f"payout_tot={snapshot.get('payout_total', 0.0):.3f}"
     )
 
@@ -146,7 +155,9 @@ def _token_age(engine: EmeraEngine, token) -> int:
     return max(int(engine.step_idx) - int(getattr(token, "birth_step", 0)), 0)
 
 
-def _format_feature_line(engine: EmeraEngine, label: str, token, metric: str, max_chars: int) -> str:
+def _format_feature_line(
+    engine: EmeraEngine, label: str, token, metric: str, max_chars: int
+) -> str:
     age = _token_age(engine, token)
     rs = float(engine.last_resonance_strength.get(token.token_id, 0.0))
     _, conf, _ = engine._raw_decode_for_token(token, rs)
@@ -164,7 +175,9 @@ def _format_feature_line(engine: EmeraEngine, label: str, token, metric: str, ma
     )
 
 
-def format_feature_lines(engine: EmeraEngine, stats: dict, k: int, max_chars: int) -> list[str]:
+def format_feature_lines(
+    engine: EmeraEngine, stats: dict, k: int, max_chars: int
+) -> list[str]:
     if k <= 0 or not engine.super_tokens:
         return []
     tokens = list(engine.super_tokens.values())
@@ -214,7 +227,9 @@ def format_feature_lines(engine: EmeraEngine, stats: dict, k: int, max_chars: in
     else:
         out.append("  feat longest_silent_activated_turn none")
 
-    oldest = max(tokens, key=lambda t: (_token_age(engine, t), float(t.energy), -int(t.token_id)))
+    oldest = max(
+        tokens, key=lambda t: (_token_age(engine, t), float(t.energy), -int(t.token_id))
+    )
     out.append(
         _format_feature_line(
             engine,
@@ -248,7 +263,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Emera v2 prototype runner")
     p.add_argument("--steps", type=int, default=5_000)
     p.add_argument("--seed", type=int, default=None)
-    p.add_argument("--token-space", type=str, choices=["byte_parity", "gpt2"], default=None)
+    p.add_argument(
+        "--token-space", type=str, choices=["byte_parity", "gpt2"], default=None
+    )
     p.add_argument("--gpt2-model-name", type=str, default=None)
     p.add_argument("--base-tokens", type=int, default=None)
     p.add_argument("--log-every", type=int, default=None)
@@ -259,13 +276,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--d-latent", type=int, default=None)
     p.add_argument("--gap-dim", type=int, default=None)
     p.add_argument("--gap-len", type=int, default=None)
-    p.add_argument("--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default=None)
+    p.add_argument(
+        "--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default=None
+    )
     p.add_argument("--gap-read-batch-size", type=int, default=None)
     p.add_argument("--num-ifs", type=int, default=None)
     p.add_argument("--chaos-substeps-per-round", type=int, default=None)
+    p.add_argument("--chaos-min-substeps", type=int, default=None)
+    p.add_argument("--chaos-max-substeps", type=int, default=None)
+    p.add_argument("--chaos-substep-cost", type=float, default=None)
     p.add_argument("--k-rounds", type=int, default=None)
     p.add_argument("--proposal-lmax", type=int, default=None)
-    p.add_argument("--obligatory-proposals", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument(
+        "--obligatory-proposals",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--proposal-min-bet", type=float, default=None)
     p.add_argument("--proposal-bet-unit-scale", type=float, default=None)
     p.add_argument("--proposal-bet-max-energy-frac", type=float, default=None)
@@ -276,7 +302,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--frontier-rescue-energy", type=float, default=None)
     p.add_argument("--frontier-rescue-noise", type=float, default=None)
     p.add_argument("--frontier-rescue-max-per-step", type=int, default=None)
-    p.add_argument("--contrastive-enabled", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument(
+        "--contrastive-enabled",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--contrastive-correct-reward", type=float, default=None)
     p.add_argument("--contrastive-wrong-penalty", type=float, default=None)
     p.add_argument("--contrastive-wrong-exp", type=float, default=None)
@@ -291,13 +321,27 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--survivor-grace-steps", type=int, default=None)
     p.add_argument("--survivor-relief-active-frac", type=float, default=None)
     p.add_argument("--survivor-relief-reservoir-frac", type=float, default=None)
-    p.add_argument("--conserve-total-energy", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
-    p.add_argument("--strict-energy-budget", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument(
+        "--conserve-total-energy",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
+    p.add_argument(
+        "--strict-energy-budget",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--energy-inflow-per-step", type=float, default=None)
     p.add_argument("--energy-reservoir-init", type=float, default=None)
     p.add_argument("--energy-reservoir-cap", type=float, default=None)
     p.add_argument("--spawn-cost", type=float, default=None)
-    p.add_argument("--self-copy-enabled", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument("--capsule-frontier-window", type=int, default=None)
+    p.add_argument("--capsule-mint-parent-pool", type=int, default=None)
+    p.add_argument(
+        "--self-copy-enabled",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--self-copy-interval", type=int, default=None)
     p.add_argument("--self-copy-cost", type=float, default=None)
     p.add_argument("--self-copy-min-energy", type=float, default=None)
@@ -307,7 +351,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mint-interval", type=int, default=None)
     p.add_argument("--mint-delta", type=float, default=None)
     p.add_argument("--ema-alpha", type=float, default=None)
-    p.add_argument("--dynamic-laws", type=lambda s: s.lower() in {"1", "true", "yes", "on"}, default=None)
+    p.add_argument(
+        "--dynamic-laws",
+        type=lambda s: s.lower() in {"1", "true", "yes", "on"},
+        default=None,
+    )
     p.add_argument("--law-update-interval", type=int, default=None)
     p.add_argument("--adaptation-rate", type=float, default=None)
     p.add_argument("--adaptation-signal-decay", type=float, default=None)
@@ -316,6 +364,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--season-wave-decay", type=float, default=None)
     p.add_argument("--season-revival-spores", type=int, default=None)
     p.add_argument("--season-revival-energy", type=float, default=None)
+    p.add_argument("--season-topology-jitter", type=float, default=None)
     p.add_argument("--log-oldest-k", type=int, default=3)
     p.add_argument("--log-oldest-max-chars", type=int, default=18)
     p.add_argument("--output-json", type=str, default=None)
@@ -358,7 +407,9 @@ def main() -> None:
             snap = engine.metrics.snapshot()
             print(format_step_line(result.stats, snap))
             if locator is not None:
-                line = locator.line_at_token_index(int(result.stats.get("cursor", engine.world.cursor)))
+                line = locator.line_at_token_index(
+                    int(result.stats.get("cursor", engine.world.cursor))
+                )
                 print(f"  text: {line}")
             for line in format_feature_lines(
                 engine=engine,

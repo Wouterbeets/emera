@@ -19,7 +19,9 @@ from config import EmeraConfig
 from engine import EmeraEngine, StepResult
 
 
-def _decode_identity(engine: EmeraEngine, identity_values: np.ndarray, max_chars: int = 48) -> str:
+def _decode_identity(
+    engine: EmeraEngine, identity_values: np.ndarray, max_chars: int = 48
+) -> str:
     vals = np.asarray(identity_values, dtype=np.int32).tolist()
     text = engine.decode_tokens_text(vals, max_chars=max_chars)
     if len(text) > max_chars:
@@ -42,7 +44,9 @@ def _parse_float(v: str | None, default: float) -> float:
         return default
 
 
-def _parse_int(v: str | None, default: int, lo: int | None = None, hi: int | None = None) -> int:
+def _parse_int(
+    v: str | None, default: int, lo: int | None = None, hi: int | None = None
+) -> int:
     if v is None:
         out = default
     else:
@@ -73,7 +77,9 @@ class Trainer:
         self.last_inference: dict[str, Any] | None = None
         self.total_steps = 0
         self.error = ""
-        self.thread = threading.Thread(target=self._loop, daemon=True, name="emera-trainer")
+        self.thread = threading.Thread(
+            target=self._loop, daemon=True, name="emera-trainer"
+        )
 
     def start(self) -> None:
         self.thread.start()
@@ -123,7 +129,9 @@ class Trainer:
             right = self.engine.decode_tokens_text(vals[window + 1 :], max_chars=200)
             marked = f"{left}[{cur}]{right}"
             frontier_token = int(self.engine.world.peek(1)[0]) if n > 0 else -1
-            frontier_tag = f"{frontier_token}:{cur.encode('unicode_escape').decode('ascii')}"
+            frontier_tag = (
+                f"{frontier_token}:{cur.encode('unicode_escape').decode('ascii')}"
+            )
             return "TOKEN_STREAM [*]", marked, frontier_tag
 
         n = int(self.world_bytes.size)
@@ -182,9 +190,17 @@ class Trainer:
                 "frontier_hex": frontier_hex,
                 "glide": float(snap.get("glide_ratio", 0.0)),
                 "epa": float(snap.get("energy_per_advance", 0.0)),
+                "root_frac": float(snap.get("root_only_fraction", 1.0)),
+                "caps_nonroot": int(snap.get("nonroot_live_capsules", 0)),
+                "caps_half_life": float(snap.get("capsule_half_life", 0.0)),
+                "caps_t1k": float(snap.get("lineage_persistence_1k", 0.0)),
+                "chaos_avg_sub": float(snap.get("chaos_avg_substeps", 0.0)),
+                "chaos_energy": float(snap.get("chaos_energy_spent", 0.0)),
             }
 
-    def supertokens(self, sort_by: str, desc: bool, min_energy: float, query: str, limit: int) -> list[dict[str, Any]]:
+    def supertokens(
+        self, sort_by: str, desc: bool, min_energy: float, query: str, limit: int
+    ) -> list[dict[str, Any]]:
         with self.lock:
             step_idx = int(self.engine.step_idx)
             q = query.lower().strip()
@@ -209,10 +225,16 @@ class Trainer:
                         "age": int(age),
                         "energy": float(energy),
                         "inactive": int(token.inactivity_steps),
-                        "len": int(np.asarray(token.identity_bytes, dtype=np.int32).size),
+                        "len": int(
+                            np.asarray(token.identity_bytes, dtype=np.int32).size
+                        ),
                         "conf": float(conf),
                         "text": text,
-                        "contains_frontier": bool(self.engine._identity_contains_frontier_byte(token.identity_bytes)),
+                        "contains_frontier": bool(
+                            self.engine._identity_contains_frontier_byte(
+                                token.identity_bytes
+                            )
+                        ),
                         "lineage": "root"
                         if int(token.parent_a) < 0 and int(token.parent_b) < 0
                         else f"{int(token.parent_a)},{int(token.parent_b)}",
@@ -231,7 +253,13 @@ class Trainer:
             rows.sort(key=key_fn, reverse=desc)
             return rows[: max(limit, 1)]
 
-    def chaos_svg(self, token_id: int, steps: int | None = None, width: int = 440, height: int = 230) -> str:
+    def chaos_svg(
+        self,
+        token_id: int,
+        steps: int | None = None,
+        width: int = 440,
+        height: int = 230,
+    ) -> str:
         with self.lock:
             token = self.engine.super_tokens.get(int(token_id))
             if token is None:
@@ -263,7 +291,9 @@ class Trainer:
         pad = 10.0
         xs = ((pts[:, 0] + 1.0) * 0.5) * (width - 2 * pad) + pad
         ys = (1.0 - (pts[:, 1] + 1.0) * 0.5) * (height - 2 * pad) + pad
-        point_str = " ".join(f"{x:.2f},{y:.2f}" for x, y in zip(xs.tolist(), ys.tolist()))
+        point_str = " ".join(
+            f"{x:.2f},{y:.2f}" for x, y in zip(xs.tolist(), ys.tolist())
+        )
         return (
             "<div class='card'>"
             f"<strong>Chaos Game | token {tid}</strong>"
@@ -391,9 +421,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 "energy_per_advance": float(snap.get("energy_per_advance", 0.0)),
                 "glide_ratio": float(snap.get("glide_ratio", 0.0)),
                 "gap_compression_ratio": float(snap.get("gap_compression_ratio", 1.0)),
-                "best_gap_compression_ratio": float(snap.get("best_gap_compression_ratio", 1.0)),
+                "best_gap_compression_ratio": float(
+                    snap.get("best_gap_compression_ratio", 1.0)
+                ),
                 "max_symbio_depth": int(snap.get("max_symbio_depth", 0)),
                 "root_only_fraction": float(snap.get("root_only_fraction", 1.0)),
+                "nonroot_live_capsules": int(snap.get("nonroot_live_capsules", 0)),
+                "capsule_half_life": float(snap.get("capsule_half_life", 0.0)),
+                "lineage_persistence_1k": float(
+                    snap.get("lineage_persistence_1k", 0.0)
+                ),
+                "chaos_energy_spent": float(snap.get("chaos_energy_spent", 0.0)),
+                "chaos_avg_substeps": float(snap.get("chaos_avg_substeps", 0.0)),
             }
             self._send_json(payload)
             return
@@ -437,7 +476,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length", "0") or "0")
         except ValueError:
             n = 0
-        raw = self.rfile.read(max(n, 0)).decode("utf-8", errors="ignore") if n > 0 else ""
+        raw = (
+            self.rfile.read(max(n, 0)).decode("utf-8", errors="ignore") if n > 0 else ""
+        )
         parsed = parse_qs(raw)
         out: dict[str, str] = {}
         for k, vals in parsed.items():
@@ -529,7 +570,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         t = self._trainer().status_snapshot()
         state_cls = "ok" if t["running"] else ("bad" if t["error"] else "warn")
         state_txt = "running" if t["running"] else ("error" if t["error"] else "paused")
-        err = f"<div class='pill bad mono'>{html.escape(str(t['error']))}</div>" if t["error"] else ""
+        err = (
+            f"<div class='pill bad mono'>{html.escape(str(t['error']))}</div>"
+            if t["error"]
+            else ""
+        )
         return (
             "<div id='status' class='card'>"
             "<div class='row' style='justify-content:space-between;'>"
@@ -556,6 +601,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             f"<span class='k'>drift</span><span class='v'>{t['drift']:+.4f}</span>"
             f"<span class='k'>EPA</span><span class='v'>{t['epa']:.4f}</span>"
             f"<span class='k'>glide</span><span class='v'>{t['glide']:.3f}</span>"
+            f"<span class='k'>root_frac</span><span class='v'>{t['root_frac']:.3f}</span>"
+            f"<span class='k'>caps_nonroot</span><span class='v'>{t['caps_nonroot']}</span>"
+            f"<span class='k'>caps_t1k</span><span class='v'>{t['caps_t1k']:.3f}</span>"
+            f"<span class='k'>caps_half_life</span><span class='v'>{t['caps_half_life']:.1f}</span>"
+            f"<span class='k'>chaos_sub</span><span class='v'>{t['chaos_avg_sub']:.1f}</span>"
+            f"<span class='k'>chaos_E</span><span class='v'>{t['chaos_energy']:.4f}</span>"
             "</div>"
             f"{err}"
             "</div>"
@@ -563,12 +614,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _render_supertokens(self, qs: dict[str, list[str]]) -> str:
         sort = (qs.get("sort", ["energy"])[0] or "energy").strip()
-        desc = _parse_bool(qs.get("desc", ["on"])[0] if "desc" in qs else None, default=True)
+        desc = _parse_bool(
+            qs.get("desc", ["on"])[0] if "desc" in qs else None, default=True
+        )
         min_energy = _parse_float(qs.get("min_energy", ["0"])[0], default=0.0)
         limit = _parse_int(qs.get("limit", ["120"])[0], default=120, lo=1, hi=2000)
-        chaos_steps = _parse_int(qs.get("chaos_steps", ["2000"])[0], default=2000, lo=1, hi=50000)
+        chaos_steps = _parse_int(
+            qs.get("chaos_steps", ["2000"])[0], default=2000, lo=1, hi=50000
+        )
         q = qs.get("q", [""])[0]
-        rows = self._trainer().supertokens(sort_by=sort, desc=desc, min_energy=min_energy, query=q, limit=limit)
+        rows = self._trainer().supertokens(
+            sort_by=sort, desc=desc, min_energy=min_energy, query=q, limit=limit
+        )
 
         head = (
             "<div class='muted' style='margin:8px 0;'>"
@@ -609,7 +666,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _render_gap(self, qs: dict[str, list[str]]) -> str:
         limit = _parse_int(qs.get("limit", ["24"])[0], default=24, lo=1, hi=200)
-        scatter_limit = _parse_int(qs.get("scatter", ["220"])[0], default=220, lo=16, hi=1000)
+        scatter_limit = _parse_int(
+            qs.get("scatter", ["220"])[0], default=220, lo=16, hi=1000
+        )
         snap = self._trainer().gap_snapshot(limit=limit, scatter_limit=scatter_limit)
         rows = snap["rows"]
         scatter = snap["scatter"]
@@ -656,7 +715,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         debug = out.get("debug", [])
         debug_html = ""
         if isinstance(debug, list) and debug:
-            debug_html = "<div class='muted' style='margin-top:6px;'>" + "<br/>".join(html.escape(str(x)) for x in debug[:8]) + "</div>"
+            debug_html = (
+                "<div class='muted' style='margin-top:6px;'>"
+                + "<br/>".join(html.escape(str(x)) for x in debug[:8])
+                + "</div>"
+            )
         return (
             "<div class='card'>"
             f"<div class='muted'>mode={html.escape(str(out.get('token_space', '?')))} "
@@ -672,11 +735,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Emera HTMX dashboard with threaded training")
+    p = argparse.ArgumentParser(
+        description="Emera HTMX dashboard with threaded training"
+    )
     p.add_argument("--host", type=str, default="127.0.0.1")
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--token-space", type=str, choices=["byte_parity", "gpt2"], default="byte_parity")
+    p.add_argument(
+        "--token-space",
+        type=str,
+        choices=["byte_parity", "gpt2"],
+        default="gpt2",
+    )
     p.add_argument("--gpt2-model-name", type=str, default="gpt2")
     p.add_argument("--base-tokens", type=int, default=None)
     p.add_argument("--d-latent", type=int, default=32)
@@ -686,11 +756,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--chaos-substeps-per-round", type=int, default=1)
     p.add_argument("--chaos-svg-default-steps", type=int, default=2000)
     p.add_argument("--chaos-svg-max-steps", type=int, default=50000)
-    p.add_argument("--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default="auto")
+    p.add_argument(
+        "--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default="auto"
+    )
     p.add_argument("--gap-read-batch-size", type=int, default=128)
+    p.add_argument("--capsule-frontier-window", type=int, default=48)
+    p.add_argument("--capsule-mint-parent-pool", type=int, default=10)
+    p.add_argument("--season-topology-jitter", type=float, default=0.02)
+    p.add_argument("--chaos-min-substeps", type=int, default=1)
+    p.add_argument("--chaos-max-substeps", type=int, default=64)
+    p.add_argument("--chaos-substep-cost", type=float, default=0.004)
     p.add_argument("--corpus-file", type=str, default="data/bible.txt")
     p.add_argument("--world-len", type=int, default=200_000)
-    p.add_argument("--world-vocab-size", type=int, default=512)
+    p.add_argument("--world-vocab-size", type=int, default=50257)
     p.add_argument("--steps-per-tick", type=int, default=1)
     p.add_argument("--sleep-ms", type=float, default=0.0)
     return p.parse_args()
@@ -715,16 +793,26 @@ def main() -> None:
         seed=int(args.seed),
         token_space=str(args.token_space),
         gpt2_model_name=str(args.gpt2_model_name),
-        base_tokens=int(base_tokens) if base_tokens is not None else EmeraConfig().base_tokens,
+        base_tokens=int(base_tokens)
+        if base_tokens is not None
+        else EmeraConfig().base_tokens,
         d_latent=max(int(args.d_latent), 4),
         gap_dim=max(int(args.gap_dim), 4),
         gap_len=max(int(args.gap_len), 4),
         k_rounds=max(int(args.k_rounds), 1),
         chaos_substeps_per_round=max(int(args.chaos_substeps_per_round), 1),
         chaos_svg_default_steps=max(int(args.chaos_svg_default_steps), 1),
-        chaos_svg_max_steps=max(int(args.chaos_svg_max_steps), int(args.chaos_svg_default_steps), 1),
+        chaos_svg_max_steps=max(
+            int(args.chaos_svg_max_steps), int(args.chaos_svg_default_steps), 1
+        ),
         gap_read_backend=str(args.gap_read_backend),
         gap_read_batch_size=max(int(args.gap_read_batch_size), 1),
+        capsule_frontier_window=max(int(args.capsule_frontier_window), 1),
+        capsule_mint_parent_pool=max(int(args.capsule_mint_parent_pool), 2),
+        season_topology_jitter=max(float(args.season_topology_jitter), 0.0),
+        chaos_min_substeps=max(int(args.chaos_min_substeps), 1),
+        chaos_max_substeps=max(int(args.chaos_max_substeps), 1),
+        chaos_substep_cost=max(float(args.chaos_substep_cost), 0.0),
         corpus_file=corpus,
         world_len=int(args.world_len),
         world_vocab_size=int(world_vocab),

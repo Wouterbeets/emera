@@ -25,6 +25,11 @@ class MetricsTracker:
     last_gap_compression_ratio: float = 1.0
     best_gap_compression_ratio: float = float("inf")
     last_root_only_fraction: float = 1.0
+    last_nonroot_live_capsules: int = 0
+    last_capsule_half_life: float = 0.0
+    last_lineage_persistence_1k: float = 0.0
+    last_chaos_energy_spent: float = 0.0
+    last_chaos_avg_substeps: float = 0.0
     last_events: List[str] = field(default_factory=list)
 
     def update(self, step_stats: Dict[str, float | int], events: list[str]) -> None:
@@ -49,13 +54,34 @@ class MetricsTracker:
             self.cumulative_nontrivial_matches += 1
         if p_len > 0 and match_for_glide == p_len:
             self.cumulative_full_matches += 1
-        self.max_symbio_depth = max(self.max_symbio_depth, int(step_stats.get("max_symbio_depth", 0)))
-        gcr = float(step_stats.get("gap_compression_ratio", self.last_gap_compression_ratio))
+        self.max_symbio_depth = max(
+            self.max_symbio_depth, int(step_stats.get("max_symbio_depth", 0))
+        )
+        gcr = float(
+            step_stats.get("gap_compression_ratio", self.last_gap_compression_ratio)
+        )
         if not math.isfinite(gcr):
             gcr = self.last_gap_compression_ratio
         self.last_gap_compression_ratio = gcr
         self.best_gap_compression_ratio = min(self.best_gap_compression_ratio, gcr)
-        self.last_root_only_fraction = float(step_stats.get("root_only_fraction", self.last_root_only_fraction))
+        self.last_root_only_fraction = float(
+            step_stats.get("root_only_fraction", self.last_root_only_fraction)
+        )
+        self.last_nonroot_live_capsules = int(
+            step_stats.get("nonroot_live_capsules", self.last_nonroot_live_capsules)
+        )
+        self.last_capsule_half_life = float(
+            step_stats.get("capsule_half_life", self.last_capsule_half_life)
+        )
+        self.last_lineage_persistence_1k = float(
+            step_stats.get("lineage_persistence_1k", self.last_lineage_persistence_1k)
+        )
+        self.last_chaos_energy_spent = float(
+            step_stats.get("chaos_energy_spent", self.last_chaos_energy_spent)
+        )
+        self.last_chaos_avg_substeps = float(
+            step_stats.get("chaos_avg_substeps", self.last_chaos_avg_substeps)
+        )
         if events:
             self.last_events.extend(events)
             self.last_events = self.last_events[-16:]
@@ -81,7 +107,8 @@ class MetricsTracker:
             # Legacy glide for debugging/compatibility.
             "token_glide_ratio": self.cumulative_raw_predicted_advance / distance,
             "proposal_efficiency": self.cumulative_raw_predicted_advance / proposed,
-            "contextual_efficiency": self.cumulative_contextual_predicted_advance / proposed,
+            "contextual_efficiency": self.cumulative_contextual_predicted_advance
+            / proposed,
             "avg_proposal_len": self.cumulative_proposed_tokens / steps,
             "nontrivial_match_rate": self.cumulative_nontrivial_matches / steps,
             "full_match_rate": self.cumulative_full_matches / steps,
@@ -96,5 +123,10 @@ class MetricsTracker:
                 else self.last_gap_compression_ratio
             ),
             "root_only_fraction": float(self.last_root_only_fraction),
+            "nonroot_live_capsules": int(self.last_nonroot_live_capsules),
+            "capsule_half_life": float(self.last_capsule_half_life),
+            "lineage_persistence_1k": float(self.last_lineage_persistence_1k),
+            "chaos_energy_spent": float(self.last_chaos_energy_spent),
+            "chaos_avg_substeps": float(self.last_chaos_avg_substeps),
             "last_events": list(self.last_events[-8:]),
         }

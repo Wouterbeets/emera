@@ -197,6 +197,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--proposal-frontier-contrast", type=int, default=None)
     p.add_argument("--frontier-rescue-max-per-step", type=int, default=None)
     p.add_argument("--frontier-rescue-energy", type=float, default=None)
+    p.add_argument("--chaos-min-substeps", type=int, default=None)
+    p.add_argument("--chaos-max-substeps", type=int, default=None)
+    p.add_argument("--chaos-substep-cost", type=float, default=None)
     p.add_argument("--self-copy-enabled", type=str, default=None)
     p.add_argument("--dynamic-laws", type=str, default=None)
     p.add_argument("--seasons-enabled", type=str, default=None)
@@ -266,6 +269,12 @@ def main() -> None:
         updates["frontier_rescue_max_per_step"] = int(args.frontier_rescue_max_per_step)
     if args.frontier_rescue_energy is not None:
         updates["frontier_rescue_energy"] = float(args.frontier_rescue_energy)
+    if args.chaos_min_substeps is not None:
+        updates["chaos_min_substeps"] = int(args.chaos_min_substeps)
+    if args.chaos_max_substeps is not None:
+        updates["chaos_max_substeps"] = int(args.chaos_max_substeps)
+    if args.chaos_substep_cost is not None:
+        updates["chaos_substep_cost"] = float(args.chaos_substep_cost)
     b_self_copy = _parse_bool(args.self_copy_enabled, default=None)
     if b_self_copy is not None:
         updates["self_copy_enabled"] = bool(b_self_copy)

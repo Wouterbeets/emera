@@ -126,6 +126,23 @@ class GapField:
         self.emitter_id = np.full((cfg.gap_len,), -1, dtype=np.int64)
         self.step_idx = np.zeros((cfg.gap_len,), dtype=np.int64)
         self.round_idx = np.zeros((cfg.gap_len,), dtype=np.int32)
+        # Full substrate capsule payload: organism state lives in gap slots.
+        self.capsule_token_id = np.full((cfg.gap_len,), -1, dtype=np.int64)
+        self.capsule_parent_a = np.full((cfg.gap_len,), -1, dtype=np.int64)
+        self.capsule_parent_b = np.full((cfg.gap_len,), -1, dtype=np.int64)
+        self.capsule_birth_step = np.zeros((cfg.gap_len,), dtype=np.int64)
+        self.capsule_inactivity_steps = np.zeros((cfg.gap_len,), dtype=np.int32)
+        self.capsule_low_energy_steps = np.zeros((cfg.gap_len,), dtype=np.int32)
+        self.capsule_lineage_depth = np.zeros((cfg.gap_len,), dtype=np.int16)
+        self.capsule_max_paid_bet = np.zeros((cfg.gap_len,), dtype=np.float32)
+        self.capsule_max_silent_correct = np.zeros((cfg.gap_len,), dtype=np.int32)
+        self.capsule_state_vec = np.zeros((cfg.gap_len, cfg.d_latent), dtype=np.float32)
+        self.capsule_signature = np.zeros((cfg.gap_len, cfg.gap_dim), dtype=np.float32)
+        self.capsule_proposal_drift = np.zeros((cfg.gap_len, cfg.d_latent), dtype=np.float32)
+        self.capsule_traits = np.zeros((cfg.gap_len, 8), dtype=np.float32)
+        self.capsule_identity = np.full((cfg.gap_len, max(int(cfg.proposal_lmax), 1)), -1, dtype=np.int32)
+        self.capsule_identity_len = np.zeros((cfg.gap_len,), dtype=np.int16)
+        self.capsule_ifs = np.zeros((cfg.gap_len, int(cfg.num_ifs), 2, 3), dtype=np.float32)
         self.ptr = 0
         self.read_backend = self._resolve_read_backend(str(cfg.gap_read_backend))
 
@@ -170,6 +187,8 @@ class GapField:
         emitter_id: int,
         step_idx: int,
         round_idx: int,
+        capsule_token: Any | None = None,
+        lineage_depth: int | None = None,
     ) -> None:
         p = self.ptr
         self.points[p] = point.astype(np.float32, copy=False)
@@ -208,7 +227,78 @@ class GapField:
         self.emitter_id[p] = int(emitter_id)
         self.step_idx[p] = int(step_idx)
         self.round_idx[p] = int(round_idx)
+        if capsule_token is not None:
+            self._store_capsule(p, capsule_token, lineage_depth)
         self.ptr = (p + 1) % self.cfg.gap_len
+
+    def _store_capsule(self, slot: int, token: Any, lineage_depth: int | None = None) -> None:
+        s = int(slot)
+        ident = np.asarray(getattr(token, "identity_bytes"), dtype=np.int32).reshape(-1)
+        n = min(int(ident.size), int(self.capsule_identity.shape[1]))
+        self.capsule_token_id[s] = int(getattr(token, "token_id"))
+        self.capsule_parent_a[s] = int(getattr(token, "parent_a", -1))
+        self.capsule_parent_b[s] = int(getattr(token, "parent_b", -1))
+        self.capsule_birth_step[s] = int(getattr(token, "birth_step", 0))
+        self.capsule_inactivity_steps[s] = int(getattr(token, "inactivity_steps", 0))
+        self.capsule_low_energy_steps[s] = int(getattr(token, "low_energy_steps", 0))
+        if lineage_depth is not None:
+            self.capsule_lineage_depth[s] = int(lineage_depth)
+        self.capsule_max_paid_bet[s] = float(getattr(token, "max_paid_bet", 0.0))
+        self.capsule_max_silent_correct[s] = int(getattr(token, "max_silent_correct", 0))
+        self.capsule_state_vec[s] = np.asarray(getattr(token, "state_vec"), dtype=np.float32)
+        self.capsule_signature[s] = np.asarray(getattr(token, "signature"), dtype=np.float32)
+        self.capsule_proposal_drift[s] = np.asarray(getattr(token, "proposal_drift"), dtype=np.float32)
+        self.capsule_traits[s, 0] = float(getattr(token, "activation_threshold", 0.5))
+        self.capsule_traits[s, 1] = float(getattr(token, "emission_amplitude", 0.4))
+        self.capsule_traits[s, 2] = float(getattr(token, "emission_decay", 0.15))
+        self.capsule_traits[s, 3] = float(getattr(token, "silence_growth_rate", 1.0))
+        self.capsule_traits[s, 4] = float(getattr(token, "resonance_width", 0.45))
+        self.capsule_traits[s, 5] = float(getattr(token, "phase_coupling", 0.25))
+        self.capsule_traits[s, 6] = float(getattr(token, "velocity_coupling", 0.20))
+        self.capsule_traits[s, 7] = float(getattr(token, "proposal_length_bias", 0.0))
+        self.capsule_identity[s].fill(-1)
+        if n > 0:
+            vmax = 255 if self.cfg.token_space == "byte_parity" else max(int(self.cfg.base_tokens) - 1, 0)
+            self.capsule_identity[s, :n] = np.clip(ident[:n], 0, vmax).astype(np.int32, copy=False)
+        self.capsule_identity_len[s] = int(n)
+        self.capsule_ifs[s] = np.asarray(getattr(token, "ifs"), dtype=np.float32)
+
+    def clear_slot(self, slot: int) -> None:
+        s = int(slot)
+        self.points[s] = 0.0
+        self.velocity[s] = 0.0
+        self.phase[s] = 0.0
+        self.omega[s] = 0.0
+        self.energy[s] = 0.0
+        self.genome_fragment[s] = -1
+        self.genome_len[s] = 0
+        self.genome_weight[s] = 0.0
+        self.ifs_fragment[s] = 0.0
+        self.ifs_weight[s] = 0.0
+        self.emitter_id[s] = -1
+        self.step_idx[s] = 0
+        self.round_idx[s] = 0
+        self.capsule_token_id[s] = -1
+        self.capsule_parent_a[s] = -1
+        self.capsule_parent_b[s] = -1
+        self.capsule_birth_step[s] = 0
+        self.capsule_inactivity_steps[s] = 0
+        self.capsule_low_energy_steps[s] = 0
+        self.capsule_lineage_depth[s] = 0
+        self.capsule_max_paid_bet[s] = 0.0
+        self.capsule_max_silent_correct[s] = 0
+        self.capsule_state_vec[s] = 0.0
+        self.capsule_signature[s] = 0.0
+        self.capsule_proposal_drift[s] = 0.0
+        self.capsule_traits[s] = 0.0
+        self.capsule_identity[s] = -1
+        self.capsule_identity_len[s] = 0
+        self.capsule_ifs[s] = 0.0
+
+    def live_capsule_slots(self, min_energy: float = 0.0) -> np.ndarray:
+        return np.where(
+            (self.capsule_token_id >= 0) & (self.energy > float(min_energy))
+        )[0].astype(np.int32, copy=False)
 
     def _read_many_numpy(
         self,
@@ -432,13 +522,5 @@ class GapField:
         mask = np.isin(self.emitter_id, np.fromiter(dead, dtype=np.int64))
         if not np.any(mask):
             return
-        self.energy[mask] = 0.0
-        self.velocity[mask] = 0.0
-        self.phase[mask] = 0.0
-        self.omega[mask] = 0.0
-        self.genome_fragment[mask] = -1
-        self.genome_len[mask] = 0
-        self.genome_weight[mask] = 0.0
-        self.ifs_fragment[mask] = 0.0
-        self.ifs_weight[mask] = 0.0
-        self.emitter_id[mask] = -1
+        for s in np.where(mask)[0].tolist():
+            self.clear_slot(int(s))

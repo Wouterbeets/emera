@@ -35,7 +35,12 @@ class EmeraConfig:
 
     # Chaos/proposal
     num_ifs: int = 4
-    chaos_substeps_per_round: int = 1
+    chaos_substeps_per_round: int = (
+        1  # legacy: ignored when energy-regulated; kept for SVG compat
+    )
+    chaos_min_substeps: int = 1
+    chaos_max_substeps: int = 24
+    chaos_substep_cost: float = 0.004
     chaos_svg_default_steps: int = 2000
     chaos_svg_max_steps: int = 50000
     k_rounds: int = 6
@@ -105,6 +110,8 @@ class EmeraConfig:
     spawn_cost: float = 0.85
     mint_interval: int = 12
     mint_delta: float = -0.08
+    capsule_frontier_window: int = 48
+    capsule_mint_parent_pool: int = 10
     self_copy_enabled: bool = False
     self_copy_interval: int = 5
     self_copy_cost: float = 0.50
@@ -161,6 +168,7 @@ class EmeraConfig:
     season_wave_decay: float = 0.65
     season_revival_spores: int = 24
     season_revival_energy: float = 1.1
+    season_topology_jitter: float = 0.02
 
     # Logging
     log_every: int = 50
@@ -181,13 +189,21 @@ class EmeraConfig:
         if self.gap_dim > self.d_latent:
             raise ValueError("gap_dim must be <= d_latent.")
         if self.gap_read_backend not in {"auto", "numpy", "jax"}:
-            raise ValueError("gap_read_backend must be one of {'auto', 'numpy', 'jax'}.")
+            raise ValueError(
+                "gap_read_backend must be one of {'auto', 'numpy', 'jax'}."
+            )
         if self.gap_read_batch_size < 1:
             raise ValueError("gap_read_batch_size must be >= 1.")
         if self.num_ifs < 1:
             raise ValueError("num_ifs must be >= 1.")
         if self.chaos_substeps_per_round < 1:
             raise ValueError("chaos_substeps_per_round must be >= 1.")
+        if self.chaos_min_substeps < 1:
+            raise ValueError("chaos_min_substeps must be >= 1.")
+        if self.chaos_max_substeps < self.chaos_min_substeps:
+            raise ValueError("chaos_max_substeps must be >= chaos_min_substeps.")
+        if self.chaos_substep_cost < 0.0:
+            raise ValueError("chaos_substep_cost must be >= 0.")
         if self.chaos_svg_default_steps < 1:
             raise ValueError("chaos_svg_default_steps must be >= 1.")
         if self.chaos_svg_max_steps < self.chaos_svg_default_steps:
@@ -226,6 +242,12 @@ class EmeraConfig:
             raise ValueError("initial_super_tokens must be >= 1.")
         if self.spawn_cost <= 0:
             raise ValueError("spawn_cost must be > 0.")
+        if self.capsule_frontier_window < 1:
+            raise ValueError("capsule_frontier_window must be >= 1.")
+        if self.capsule_frontier_window > self.gap_len:
+            raise ValueError("capsule_frontier_window must be <= gap_len.")
+        if self.capsule_mint_parent_pool < 2:
+            raise ValueError("capsule_mint_parent_pool must be >= 2.")
         if self.self_copy_interval < 1:
             raise ValueError("self_copy_interval must be >= 1.")
         if self.self_copy_cost <= 0.0:
@@ -255,7 +277,9 @@ class EmeraConfig:
         if self.energy_reservoir_cap <= 0.0:
             raise ValueError("energy_reservoir_cap must be > 0.")
         if self.conserve_total_energy and self.energy_inflow_per_step != 0.0:
-            raise ValueError("conserve_total_energy requires energy_inflow_per_step == 0.")
+            raise ValueError(
+                "conserve_total_energy requires energy_inflow_per_step == 0."
+            )
         if not (0.0 <= self.death_recycle_fraction <= 1.0):
             raise ValueError("death_recycle_fraction must be in [0, 1].")
         if self.death_recycle_flat < 0.0:
@@ -274,6 +298,8 @@ class EmeraConfig:
             raise ValueError("season_revival_spores must be >= 0.")
         if self.season_revival_energy <= 0.0:
             raise ValueError("season_revival_energy must be > 0.")
+        if self.season_topology_jitter < 0.0:
+            raise ValueError("season_topology_jitter must be >= 0.")
         if not (0.0 <= self.adaptation_ema_decay < 1.0):
             raise ValueError("adaptation_ema_decay must be in [0, 1).")
         if self.adaptation_rate < 0.0:
@@ -282,7 +308,10 @@ class EmeraConfig:
             raise ValueError("adaptation_signal_decay must be in [0, 1).")
         if self.pareto_alpha_init < 1.01:
             raise ValueError("pareto_alpha_init must be >= 1.01.")
-        if self.pareto_alpha_min < 1.01 or self.pareto_alpha_max < self.pareto_alpha_min:
+        if (
+            self.pareto_alpha_min < 1.01
+            or self.pareto_alpha_max < self.pareto_alpha_min
+        ):
             raise ValueError("invalid pareto alpha bounds.")
         if not (0.0 <= self.child_reward_share <= 1.0):
             raise ValueError("child_reward_share must be in [0, 1].")
