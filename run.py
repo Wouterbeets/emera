@@ -101,6 +101,7 @@ def format_step_line(stats: dict, snapshot: dict) -> str:
     return (
         f"step={stats['step']} active={stats['active_super']} proposers={stats['proposers']} "
         f"rescue={stats.get('frontier_rescue_spawned', 0)} "
+        f"rescue_win={stats.get('winner_from_frontier_rescue', 0)} "
         f"win={stats['winner_id']} conf={stats['winner_conf']:.3f} len={stats['proposal_len']} "
         f"super_token_len={stats.get('winner_super_token_len', 0)} "
         f"match={stats['match_len']} adv={stats['advance_len']} "
@@ -114,6 +115,10 @@ def format_step_line(stats: dict, snapshot: dict) -> str:
         f"sp={stats['law_spawn_cost']:.3f},pa={stats['law_pareto_alpha']:.2f}) "
         f"reservoir={stats.get('reservoir', 0.0):.2f} drift={stats.get('energy_drift', 0.0):+.4f} "
         f"EPA={snapshot['energy_per_advance']:.4f} glide={snapshot['glide_ratio']:.3f} "
+        f"tok_glide={snapshot.get('token_glide_ratio', snapshot['glide_ratio']):.3f} "
+        f"gap_cr={snapshot.get('gap_compression_ratio', 1.0):.3f} "
+        f"depth={int(snapshot.get('max_symbio_depth', 0))} "
+        f"root_frac={snapshot.get('root_only_fraction', 1.0):.3f} "
         f"payout_tot={snapshot.get('payout_total', 0.0):.3f}"
     )
 
@@ -371,6 +376,10 @@ def main() -> None:
     print(
         f"done steps={args.steps} elapsed={elapsed:.2f}s active={final['active_super']} "
         f"EPA={snap['energy_per_advance']:.4f} glide={snap['glide_ratio']:.3f} "
+        f"tok_glide={snap.get('token_glide_ratio', snap['glide_ratio']):.3f} "
+        f"gap_cr={snap.get('gap_compression_ratio', 1.0):.3f} "
+        f"depth={int(snap.get('max_symbio_depth', 0))} "
+        f"root_frac={snap.get('root_only_fraction', 1.0):.3f} "
         f"births={snap['births_total']} deaths={snap['deaths_total']}"
     )
 

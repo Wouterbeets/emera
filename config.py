@@ -103,7 +103,7 @@ class EmeraConfig:
     spawn_cost: float = 1.00
     mint_interval: int = 25
     mint_delta: float = 0.00
-    self_copy_enabled: bool = False
+    self_copy_enabled: bool = True
     self_copy_interval: int = 5
     self_copy_cost: float = 0.50
     self_copy_min_energy: float = 1.20

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 
 import numpy as np
+import zlib
 
 from config import EmeraConfig
 from cooperation import CooperationStats
@@ -64,6 +65,8 @@ class EmeraEngine:
             birth_step=0,
             identity_bank=identity_bank,
         )
+        self.lineage_depth: dict[int, int] = {int(tid): 0 for tid in self.super_tokens.keys()}
+        self.max_symbio_depth_ever = 0
         self.next_token_id = self.base_vocab_size + cfg.initial_super_tokens
         self.coop = CooperationStats(alpha=cfg.ema_alpha)
         self.metrics = MetricsTracker()
@@ -435,6 +438,55 @@ class EmeraEngine:
         gap_e = float(np.sum(np.clip(self.gap.energy, 0.0, None)))
         return float(tok + self.energy_reservoir + gap_e)
 
+    def _register_lineage_depth(self, token: SuperToken) -> None:
+        pa = int(token.parent_a)
+        pb = int(token.parent_b)
+        if pa < 0 and pb < 0:
+            depth = 0
+        else:
+            da = int(self.lineage_depth.get(pa, 0)) if pa >= 0 else 0
+            db = int(self.lineage_depth.get(pb, 0)) if pb >= 0 else 0
+            depth = 1 + max(da, db)
+        self.lineage_depth[int(token.token_id)] = int(depth)
+        if depth > self.max_symbio_depth_ever:
+            self.max_symbio_depth_ever = int(depth)
+
+    def _lineage_metrics(self) -> tuple[int, float]:
+        n = len(self.super_tokens)
+        if n <= 0:
+            return 0, 1.0
+        max_depth = 0
+        roots = 0
+        for tid, tok in self.super_tokens.items():
+            depth = int(self.lineage_depth.get(int(tid), 0))
+            if depth <= 0 and int(tok.parent_a) >= 0:
+                depth = 1
+            if depth > max_depth:
+                max_depth = depth
+            if depth <= 0:
+                roots += 1
+        return int(max_depth), float(roots) / float(n)
+
+    def _gap_compression_ratio(self) -> float:
+        active = np.asarray(self.gap.energy > 1e-9)
+        if not np.any(active):
+            return 1.0
+        lens = np.asarray(self.gap.genome_len[active], dtype=np.int32)
+        frags = np.asarray(self.gap.genome_fragment[active], dtype=np.int32)
+        seq: list[np.ndarray] = []
+        for row, n in zip(frags, lens):
+            k = int(n)
+            if k <= 0:
+                continue
+            seq.append(np.clip(row[:k], 0, 65535).astype(np.uint16, copy=False))
+        if not seq:
+            return 1.0
+        raw = np.concatenate(seq, axis=0).tobytes()
+        if len(raw) <= 0:
+            return 1.0
+        comp = zlib.compress(raw, level=9)
+        return float(len(comp)) / float(max(len(raw), 1))
+
     def _reservoir_add(self, amount: float) -> None:
         if not self.cfg.strict_energy_budget:
             return
@@ -597,6 +649,7 @@ class EmeraEngine:
             token = make_initial_super_token(self.cfg, self.rng, tid, birth_step=self.step_idx)
             token.energy = float(min(e, self.cfg.token_energy_cap))
             self.super_tokens[tid] = token
+            self._register_lineage_depth(token)
             self.next_token_id += 1
             born += 1
         return born
@@ -752,6 +805,16 @@ class EmeraEngine:
             gated = frontier_props + sampled
             return gated, len(frontier_props), len(gated)
 
+        n_fallback = min(len(other_props), int(self.cfg.proposal_frontier_fallback))
+        if n_fallback > 0:
+            ranked = sorted(
+                other_props,
+                key=lambda p: (float(p.confidence), float(p.expected_return), int(p.token_id)),
+                reverse=True,
+            )
+            gated = ranked[:n_fallback]
+            return gated, 0, len(gated)
+
         return [], 0, 0
 
     def _spawn_frontier_specialist(self, frontier_tid: int) -> Optional[SuperToken]:
@@ -760,7 +823,7 @@ class EmeraEngine:
             return None
 
         tid = self.next_token_id
-        l = int(self.rng.integers(1, self.cfg.proposal_lmax + 1))
+        l = max(int(self.cfg.proposal_lmax), 1)
         ident = self.world.peek(l).astype(np.int32)
         if self.cfg.token_space == "byte_parity":
             ident = (ident & 0xFF).astype(np.int32)
@@ -785,6 +848,7 @@ class EmeraEngine:
         token.energy = float(min(e, self.cfg.token_energy_cap))
 
         self.super_tokens[tid] = token
+        self._register_lineage_depth(token)
         self.next_token_id += 1
         return token
 
@@ -1012,6 +1076,7 @@ class EmeraEngine:
                 birth_step=self.step_idx,
             )
             self.super_tokens[child.token_id] = child
+            self._register_lineage_depth(child)
             self.next_token_id += 1
             births += 1
             events.append(
@@ -1059,6 +1124,7 @@ class EmeraEngine:
                 birth_step=self.step_idx,
             )
             self.super_tokens[child.token_id] = child
+            self._register_lineage_depth(child)
             self.next_token_id += 1
             births += 1
             events.append(
@@ -1166,7 +1232,14 @@ class EmeraEngine:
                     contrast = []
                 proposal_ids = frontier_ids + contrast
             else:
-                proposal_ids = []
+                n = min(len(non_frontier_ids), int(cfg.proposal_frontier_fallback))
+                if n > 0 and len(non_frontier_ids) > n:
+                    ridx = np.asarray(self.rng.choice(len(non_frontier_ids), size=n, replace=False), dtype=np.int64)
+                    proposal_ids = [non_frontier_ids[int(i)] for i in ridx.tolist()]
+                elif n > 0:
+                    proposal_ids = list(non_frontier_ids)
+                else:
+                    proposal_ids = []
         else:
             proposal_ids = active_ids
         proposals: list[Proposal] = []
@@ -1178,35 +1251,61 @@ class EmeraEngine:
         proposals_raw_count = len(proposals)
         proposals, frontier_match_count, proposals_gated_count = self._gate_proposals_to_frontier(proposals)
         frontier_rescue_spawned = 0
+        frontier_rescue_ids: set[int] = set()
+
+        proposal_evals: list[tuple[Proposal, dict[str, float | int]]] = []
+        for p in proposals:
+            e = self._proposal_realized_components(p)
+            proposal_evals.append((p, e))
+
+        if int(cfg.frontier_rescue_max_per_step) > 0:
+            best_match = max((int(e["match_len"]) for _, e in proposal_evals), default=0)
+            if best_match <= 1:
+                frontier_tid = int(self.world.peek(1)[0])
+                for _ in range(int(cfg.frontier_rescue_max_per_step)):
+                    rescue_tok = self._spawn_frontier_specialist(frontier_tid)
+                    if rescue_tok is None:
+                        break
+                    frontier_rescue_spawned += 1
+                    frontier_rescue_ids.add(int(rescue_tok.token_id))
+                    rescue_prop = self._proposal_for_token(rescue_tok, 0.0)
+                    if rescue_prop is None:
+                        continue
+                    proposals.append(rescue_prop)
+                    rescue_eval = self._proposal_realized_components(rescue_prop)
+                    proposal_evals.append((rescue_prop, rescue_eval))
+                    if int(rescue_eval["match_len"]) > 0:
+                        break
 
         proposer_ids = [int(p.token_id) for p in proposals]
 
         winner: Optional[Proposal] = None
         winner_eval: Optional[dict[str, float | int]] = None
-        proposal_evals: list[tuple[Proposal, dict[str, float | int]]] = []
-        if proposals:
-            for p in proposals:
-                e = self._proposal_realized_components(p)
-                proposal_evals.append((p, e))
-                if winner is None or winner_eval is None:
-                    winner = p
-                    winner_eval = e
+        winner_rank: tuple[float, float, float, float] | None = None
+        if proposal_evals:
+            for p, e in proposal_evals:
+                # Newly spawned rescue specialists seed the population but should
+                # not take the same-step win.
+                if int(p.token_id) in frontier_rescue_ids:
                     continue
-                # Selection is environmental: best realized score wins.
-                if (
-                    float(e["score"]) > float(winner_eval["score"])
-                    or (
-                        float(e["score"]) == float(winner_eval["score"])
-                        and int(e["match_len"]) > int(winner_eval["match_len"])
-                    )
-                    or (
-                        float(e["score"]) == float(winner_eval["score"])
-                        and int(e["match_len"]) == int(winner_eval["match_len"])
-                        and float(p.confidence) > float(winner.confidence)
-                    )
-                ):
+                m = int(e["match_len"])
+                plen = max(int(e["proposal_len"]), 1)
+                rank = (
+                    float(m),
+                    float(m) / float(plen),
+                    float(p.confidence),
+                    float(e["score"]),
+                )
+                if winner is None or winner_eval is None or winner_rank is None:
                     winner = p
                     winner_eval = e
+                    winner_rank = rank
+                    continue
+                # Prediction mode: prefer strongest true prefix match, then confidence, then economics.
+                if rank > winner_rank:
+                    winner = p
+                    winner_eval = e
+                    winner_rank = rank
 
         longest_silent_turn_id = -1
         longest_silent_turn_steps = 0
@@ -1261,6 +1360,7 @@ class EmeraEngine:
             disc_cost = discovery_cost(unmatched_len, cfg)
             jackpot = 0.0
             winner_id = None
+            winner_from_frontier_rescue = 0
             winner_conf = 0.0
             proposal_len = 0
             winner_super_token_len = 0
@@ -1274,6 +1374,7 @@ class EmeraEngine:
             disc_cost = float(winner_eval["discovery_cost"])
             jackpot = float(winner_eval["jackpot"])
             winner_id = winner.token_id
+            winner_from_frontier_rescue = int(int(winner.token_id) in frontier_rescue_ids)
             winner_conf = winner.confidence
             winner_token_ref = self.super_tokens.get(winner.token_id)
             if winner_token_ref is not None:
@@ -1520,14 +1621,21 @@ class EmeraEngine:
             events.append(law_event)
 
         discovery_advance = max(advance_len - match_len, 0)
+        max_symbio_depth, root_only_fraction = self._lineage_metrics()
+        gap_compression_ratio = self._gap_compression_ratio()
         stats = {
             "step": self.step_idx,
             "active_super": len(self.super_tokens),
+            "max_symbio_depth": int(max_symbio_depth),
+            "max_symbio_depth_ever": int(self.max_symbio_depth_ever),
+            "root_only_fraction": float(root_only_fraction),
+            "gap_compression_ratio": float(gap_compression_ratio),
             "proposers": len(proposer_ids),
             "proposers_raw": int(proposals_raw_count),
             "proposers_frontier": int(frontier_match_count),
             "proposers_gated": int(proposals_gated_count),
             "frontier_rescue_spawned": int(frontier_rescue_spawned),
+            "winner_from_frontier_rescue": int(winner_from_frontier_rescue),
             "winner_id": -1 if winner_id is None else int(winner_id),
             "winner_conf": float(winner_conf),
             "proposal_len": int(proposal_len),
@@ -1716,6 +1824,73 @@ class EmeraEngine:
 
         preview = [(int(t), float(s)) for t, s in ranked[: max(1, int(top_k))]]
         return choice, {"used": int(len(details)), "top": preview}
+
+    def _infer_next_distribution(
+        self,
+        frontier_tid: int,
+        right_tid: int | None = None,
+        top_k: int = 64,
+        temperature: float = 1.0,
+        recent_tokens: list[int] | None = None,
+    ) -> tuple[int, dict[int, float], dict]:
+        candidates: dict[int, float] = {}
+        details: list[tuple[int, int, float]] = []
+        if not self.super_tokens:
+            fallback = int(np.clip(frontier_tid, 0, self.base_vocab_size - 1))
+            return fallback, {fallback: 1.0}, {"used": 0, "top": [(fallback, 1.0)]}
+
+        pool = sorted(
+            self.super_tokens.values(),
+            key=lambda t: float(t.energy),
+            reverse=True,
+        )[: max(1, max(int(top_k), 1) * 8)]
+        frontier = int(np.clip(frontier_tid, 0, self.base_vocab_size - 1))
+        right = None if right_tid is None else int(np.clip(right_tid, 0, self.base_vocab_size - 1))
+        for token in pool:
+            ids = self._infer_identity_tokens_for_frontier(token.identity_bytes, frontier)
+            if ids.size <= 0:
+                continue
+            nxt = int(ids[1]) if ids.size >= 2 else int(ids[0])
+            energy_norm = float(np.clip(float(token.energy) / max(float(self.cfg.token_energy_cap), 1e-6), 0.0, 1.0))
+            length_norm = float(np.clip(float(ids.size) / max(float(self.cfg.proposal_lmax), 1.0), 0.0, 1.0))
+            conf = 0.30 + 0.45 * length_norm + 0.25 * energy_norm
+            score = float(np.clip(conf * (0.25 + 0.75 * energy_norm), 0.0, 5.0))
+            if right is not None and ids.size >= 3 and int(ids[2]) == right:
+                score += 0.35
+            elif right is not None and nxt == right:
+                score += 0.10
+            candidates[nxt] = candidates.get(nxt, 0.0) + score
+            details.append((int(token.token_id), nxt, score))
+
+        if not candidates:
+            fallback = int(np.clip(frontier, 0, self.base_vocab_size - 1))
+            return fallback, {fallback: 1.0}, {"used": 0, "top": [(fallback, 1.0)]}
+
+        if recent_tokens:
+            tail = recent_tokens[-32:]
+            freq: dict[int, int] = {}
+            for t in tail:
+                tid = int(t)
+                freq[tid] = freq.get(tid, 0) + 1
+            for tid, count in freq.items():
+                if tid in candidates:
+                    candidates[tid] -= 0.18 * float(count)
+
+        ranked = sorted(candidates.items(), key=lambda kv: kv[1], reverse=True)
+        if int(top_k) > 0:
+            support = ranked[: max(1, int(top_k))]
+        else:
+            support = ranked
+        toks = np.asarray([int(t) for t, _ in support], dtype=np.int32)
+        vals = np.asarray([float(s) for _, s in support], dtype=np.float64)
+        vals = vals - float(np.max(vals))
+        temp = max(float(temperature), 1e-6)
+        probs = np.exp(vals / temp)
+        probs = probs / max(float(np.sum(probs)), 1e-12)
+        choice = int(toks[int(np.argmax(probs))])
+        dist = {int(t): float(p) for t, p in zip(toks.tolist(), probs.tolist())}
+        preview = [(int(t), float(s)) for t, s in support[: min(16, len(support))]]
+        return choice, dist, {"used": int(len(details)), "top": preview}
 
     def infer_generate(
         self,

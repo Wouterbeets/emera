@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import json
 import re
 import threading
 import time
@@ -353,6 +354,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
+        data = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
@@ -371,6 +380,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/partials/gap":
             self._send_html(self._render_gap(qs))
+            return
+        if path == "/api/status":
+            t = self._trainer()
+            status = t.status_snapshot()
+            snap = t.engine.metrics.snapshot()
+            payload = {
+                "step": int(status.get("step", 0)),
+                "active_super": int(status.get("active", 0)),
+                "energy_per_advance": float(snap.get("energy_per_advance", 0.0)),
+                "glide_ratio": float(snap.get("glide_ratio", 0.0)),
+                "gap_compression_ratio": float(snap.get("gap_compression_ratio", 1.0)),
+                "best_gap_compression_ratio": float(snap.get("best_gap_compression_ratio", 1.0)),
+                "max_symbio_depth": int(snap.get("max_symbio_depth", 0)),
+                "root_only_fraction": float(snap.get("root_only_fraction", 1.0)),
+            }
+            self._send_json(payload)
             return
         self._send_html("<h1>404</h1>", status=404)
 

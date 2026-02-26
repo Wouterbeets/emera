@@ -16,6 +16,7 @@ DASH_STEPS_PER_TICK ?= 1
 DASH_SLEEP_MS ?= 0
 DASH_TOKEN_SPACE ?= gpt2
 DASH_GPT2_MODEL ?= gpt2
+DASH_CORPUS ?= data/tiny_bible.txt
 
 # Energy ecology defaults (conservative system)
 CONSERVE ?= true
@@ -51,7 +52,7 @@ help:
 	@echo "  STEPS=..., LOG_EVERY=..., WORLD_VOCAB=..., WORLD_LEN=..."
 	@echo "  OUT_JSON=out/my_run.json"
 	@echo "  DASH_HOST=127.0.0.1 DASH_PORT=8787 DASH_STEPS_PER_TICK=1 DASH_SLEEP_MS=0"
-	@echo "  DASH_TOKEN_SPACE=gpt2 DASH_GPT2_MODEL=gpt2"
+	@echo "  DASH_TOKEN_SPACE=gpt2 DASH_GPT2_MODEL=gpt2 DASH_CORPUS=data/tiny_bible.txt"
 	@echo ""
 	@echo "Example:"
 	@echo "  make run STEPS=12000 LOG_EVERY=200"
@@ -87,7 +88,7 @@ dashboard: check
 		--seed $(SEED) \
 		--token-space $(DASH_TOKEN_SPACE) \
 		--gpt2-model-name $(DASH_GPT2_MODEL) \
-		--corpus-file $(CORPUS) \
+		--corpus-file $(DASH_CORPUS) \
 		--world-vocab-size $(WORLD_VOCAB) \
 		--world-len $(WORLD_LEN) \
 		--host $(DASH_HOST) \
@@ -100,7 +101,7 @@ dashboard-public: check
 		--seed $(SEED) \
 		--token-space $(DASH_TOKEN_SPACE) \
 		--gpt2-model-name $(DASH_GPT2_MODEL) \
-		--corpus-file $(CORPUS) \
+		--corpus-file $(DASH_CORPUS) \
 		--world-vocab-size $(WORLD_VOCAB) \
 		--world-len $(WORLD_LEN) \
 		--host 0.0.0.0 \
