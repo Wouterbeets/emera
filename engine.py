@@ -1004,12 +1004,23 @@ class EmeraEngine:
         b = winner.parent_b
         parent_a = self.super_tokens.get(a)
         parent_b = self.super_tokens.get(b)
-        if parent_a is not None and parent_b is not None:
-            winner.energy += self.cfg.child_reward_share * payout
-            parent_a.energy += self.cfg.parent_reward_share * payout
-            parent_b.energy += self.cfg.parent_reward_share * payout
+        if parent_a is None and parent_b is None:
+            winner.energy += payout
             return
-        winner.energy += payout
+
+        paid_to_parents = 0.0
+        parent_share = float(self.cfg.parent_reward_share) * payout
+        if parent_a is not None:
+            parent_a.energy += parent_share
+            paid_to_parents += parent_share
+        if parent_b is not None and parent_b is not parent_a:
+            parent_b.energy += parent_share
+            paid_to_parents += parent_share
+
+        # Preserve full payout accounting: winner gets child share plus any
+        # unclaimed remainder (dead/missing parent or configured residual).
+        winner_base = float(self.cfg.child_reward_share) * payout
+        winner.energy += max(0.0, payout - paid_to_parents - winner_base) + winner_base
 
     def _self_copy_cycle(self, proposal_evals: list[tuple[Proposal, dict[str, float | int]]]) -> tuple[int, list[str]]:
         cfg = self.cfg
@@ -1150,64 +1161,101 @@ class EmeraEngine:
                 continue
             prefix_match_frac[tid] = self._identity_prefix_fraction(token.identity_bytes)
 
-        # K synchronized rounds; writes are immediate and visible in following rounds.
+        # K synchronized rounds; each read batch uses a frozen gap snapshot,
+        # and writes become visible to later batches/rounds.
         for round_idx in range(cfg.k_rounds):
             if self.cfg.conserve_total_energy:
                 lost = float(np.sum(self.gap.energy) * max(1.0 - self.cfg.gap_decay, 0.0))
                 self._reservoir_add(lost)
             self.gap.decay()
-            for tid in list(self.super_tokens.keys()):
-                token = self.super_tokens.get(tid)
-                if token is None or token.energy <= cfg.min_viable_energy:
+            round_ids = [
+                int(tid)
+                for tid, tok in self.super_tokens.items()
+                if float(tok.energy) > cfg.min_viable_energy
+            ]
+            if not round_ids:
+                continue
+            batch_size = max(int(self.cfg.gap_read_batch_size), 1)
+            d_gap = int(self.cfg.gap_dim)
+            for i0 in range(0, len(round_ids), batch_size):
+                chunk_ids = round_ids[i0 : i0 + batch_size]
+                live_ids: list[int] = []
+                batch_sig = np.zeros((batch_size, d_gap), dtype=np.float32)
+                batch_width = np.zeros((batch_size,), dtype=np.float32)
+                batch_phase = np.zeros((batch_size,), dtype=np.float32)
+                batch_coupling = np.zeros((batch_size,), dtype=np.float32)
+                batch_valid = np.zeros((batch_size,), dtype=np.float32)
+                for tid in chunk_ids:
+                    token = self.super_tokens.get(int(tid))
+                    if token is None or token.energy <= cfg.min_viable_energy:
+                        continue
+                    j = len(live_ids)
+                    if j >= batch_size:
+                        break
+                    live_ids.append(int(tid))
+                    batch_sig[j] = np.asarray(token.signature, dtype=np.float32)
+                    batch_width[j] = float(token.resonance_width)
+                    batch_phase[j] = float(token.phase)
+                    batch_coupling[j] = float(token.phase_coupling)
+                    batch_valid[j] = 1.0
+                if not live_ids:
                     continue
-                read = self.gap.read(
-                    receiver_signature=token.signature,
-                    resonance_width=token.resonance_width,
-                    receiver_phase=token.phase,
-                    phase_coupling=token.phase_coupling,
-                )
-                resonance_latent = self._gap_to_latent(read.resonance)
-                substeps = max(int(self.cfg.chaos_substeps_per_round), 1)
-                vel_sum = np.zeros((2,), dtype=np.float32)
-                vel2 = vel_sum
-                for _ in range(substeps):
-                    vel2 = token.chaos_step(self.rng, resonance_latent)
-                    vel_sum += vel2.astype(np.float32)
-                vel2 = (vel_sum / float(substeps)).astype(np.float32)
-                last_strength[tid] = read.strength
 
-                prefix_score = float(prefix_match_frac.get(tid, 0.0))
-                wake_score = 0.85 * prefix_score + 0.15 * float(read.strength)
-                activate = wake_score >= token.activation_threshold
-                if not activate:
-                    continue
-                emit, vel, eng = token.emission(cfg, vel2)
-                if eng <= cfg.min_viable_energy:
-                    continue
-                eng_paid = self._drain_token_to_gap(token, eng)
-                if eng_paid <= cfg.min_viable_energy:
-                    if self.cfg.conserve_total_energy and eng_paid > 0.0:
-                        self._reservoir_add(eng_paid)
-                    continue
-                if self.cfg.conserve_total_energy:
-                    overwritten = float(self.gap.energy[self.gap.ptr])
-                    if overwritten > 0.0:
-                        self._reservoir_add(overwritten)
-                self.gap.write(
-                    point=emit,
-                    velocity=vel,
-                    phase=token.phase,
-                    omega=token.omega,
-                    energy=eng_paid,
-                    genome_fragment=token.identity_bytes,
-                    genome_weight=float(read.strength),
-                    ifs_fragment=token.ifs,
-                    ifs_weight=float(read.strength),
-                    emitter_id=tid,
-                    step_idx=self.step_idx,
-                    round_idx=round_idx,
+                batch_resonance, batch_strength = self.gap.read_many(
+                    receiver_signature=batch_sig,
+                    resonance_width=batch_width,
+                    receiver_phase=batch_phase,
+                    phase_coupling=batch_coupling,
+                    valid_mask=batch_valid,
                 )
-                active_rounds[tid] = active_rounds.get(tid, 0) + 1
+
+                for j, tid in enumerate(live_ids):
+                    token = self.super_tokens.get(int(tid))
+                    if token is None or token.energy <= cfg.min_viable_energy:
+                        continue
+                    read_strength = float(batch_strength[j])
+                    resonance_latent = self._gap_to_latent(np.asarray(batch_resonance[j], dtype=np.float32))
+                    substeps = max(int(self.cfg.chaos_substeps_per_round), 1)
+                    vel_sum = np.zeros((2,), dtype=np.float32)
+                    vel2 = vel_sum
+                    for _ in range(substeps):
+                        vel2 = token.chaos_step(self.rng, resonance_latent)
+                        vel_sum += vel2.astype(np.float32)
+                    vel2 = (vel_sum / float(substeps)).astype(np.float32)
+                    last_strength[tid] = read_strength
+
+                    prefix_score = float(prefix_match_frac.get(tid, 0.0))
+                    wake_score = 0.85 * prefix_score + 0.15 * read_strength
+                    activate = wake_score >= token.activation_threshold
+                    if not activate:
+                        continue
+                    emit, vel, eng = token.emission(cfg, vel2)
+                    if eng <= cfg.min_viable_energy:
+                        continue
+                    eng_paid = self._drain_token_to_gap(token, eng)
+                    if eng_paid <= cfg.min_viable_energy:
+                        if self.cfg.conserve_total_energy and eng_paid > 0.0:
+                            self._reservoir_add(eng_paid)
+                        continue
+                    if self.cfg.conserve_total_energy:
+                        overwritten = float(self.gap.energy[self.gap.ptr])
+                        if overwritten > 0.0:
+                            self._reservoir_add(overwritten)
+                    self.gap.write(
+                        point=emit,
+                        velocity=vel,
+                        phase=token.phase,
+                        omega=token.omega,
+                        energy=eng_paid,
+                        genome_fragment=token.identity_bytes,
+                        genome_weight=read_strength,
+                        ifs_fragment=token.ifs,
+                        ifs_weight=read_strength,
+                        emitter_id=tid,
+                        step_idx=self.step_idx,
+                        round_idx=round_idx,
+                    )
+                    active_rounds[tid] = active_rounds.get(tid, 0) + 1
 
         self.last_resonance_strength = last_strength
 
@@ -1626,6 +1674,7 @@ class EmeraEngine:
         stats = {
             "step": self.step_idx,
             "active_super": len(self.super_tokens),
+            "gap_read_backend": str(self.gap.read_backend),
             "max_symbio_depth": int(max_symbio_depth),
             "max_symbio_depth_ever": int(self.max_symbio_depth_ever),
             "root_only_fraction": float(root_only_fraction),

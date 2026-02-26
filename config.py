@@ -27,6 +27,8 @@ class EmeraConfig:
     gap_len: int = 128
     gap_decay: float = 0.97
     gap_velocity_decay: float = 0.90
+    gap_read_backend: str = "auto"  # {"auto", "numpy", "jax"}
+    gap_read_batch_size: int = 128
     omega_base: float = 0.035
     omega_jitter: float = 0.010
     beacon_strength: float = 0.10
@@ -37,7 +39,7 @@ class EmeraConfig:
     chaos_svg_default_steps: int = 2000
     chaos_svg_max_steps: int = 50000
     k_rounds: int = 6
-    proposal_lmax: int = 8
+    proposal_lmax: int = 14
     confidence_scale: float = 10.0
     proposal_drift_scale: float = 0.08
     obligatory_proposals: bool = True
@@ -46,9 +48,9 @@ class EmeraConfig:
     proposal_bet_max_energy_frac: float = 0.12
     proposal_bet_floor_frac: float = 0.08
     proposal_bet_conf_gain: float = 8.0
-    proposal_frontier_contrast: int = 8
-    proposal_frontier_fallback: int = 24
-    frontier_rescue_energy: float = 0.60
+    proposal_frontier_contrast: int = 16
+    proposal_frontier_fallback: int = 32
+    frontier_rescue_energy: float = 0.888
     frontier_rescue_noise: float = 0.04
     frontier_rescue_max_per_step: int = 1
     contrastive_enabled: bool = True
@@ -78,7 +80,7 @@ class EmeraConfig:
     discovery_cost: float = 0.18
     token_energy_cap: float = 50.0
     min_viable_energy: float = 1e-4
-    survivor_grace_steps: int = 8
+    survivor_grace_steps: int = 20
     survivor_relief_active_frac: float = 0.35
     survivor_relief_reservoir_frac: float = 0.01
     strict_energy_budget: bool = True
@@ -90,8 +92,8 @@ class EmeraConfig:
     death_recycle_flat: float = 0.0
 
     # Silence credit
-    silence_log_coeff: float = 0.004
-    silence_exp_coeff: float = 0.0010
+    silence_log_coeff: float = 0.006
+    silence_exp_coeff: float = 0.0014
     silence_exp_rate: float = 0.015
 
     # Jackpot
@@ -100,10 +102,10 @@ class EmeraConfig:
     jackpot_silence_scale: float = 0.40
 
     # Symbiogenesis
-    spawn_cost: float = 1.00
-    mint_interval: int = 25
-    mint_delta: float = 0.00
-    self_copy_enabled: bool = True
+    spawn_cost: float = 0.85
+    mint_interval: int = 12
+    mint_delta: float = -0.08
+    self_copy_enabled: bool = False
     self_copy_interval: int = 5
     self_copy_cost: float = 0.50
     self_copy_min_energy: float = 1.20
@@ -122,8 +124,8 @@ class EmeraConfig:
     pareto_clip: float = 12.0
 
     # Reward split for child success
-    child_reward_share: float = 0.80
-    parent_reward_share: float = 0.10
+    child_reward_share: float = 0.60
+    parent_reward_share: float = 0.18
 
     # Adaptive natural laws (environment-driven)
     dynamic_laws: bool = True
@@ -178,6 +180,10 @@ class EmeraConfig:
             raise ValueError("gap_dim must be >= 4.")
         if self.gap_dim > self.d_latent:
             raise ValueError("gap_dim must be <= d_latent.")
+        if self.gap_read_backend not in {"auto", "numpy", "jax"}:
+            raise ValueError("gap_read_backend must be one of {'auto', 'numpy', 'jax'}.")
+        if self.gap_read_batch_size < 1:
+            raise ValueError("gap_read_batch_size must be >= 1.")
         if self.num_ifs < 1:
             raise ValueError("num_ifs must be >= 1.")
         if self.chaos_substeps_per_round < 1:

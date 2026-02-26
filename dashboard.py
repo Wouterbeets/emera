@@ -679,9 +679,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--token-space", type=str, choices=["byte_parity", "gpt2"], default="byte_parity")
     p.add_argument("--gpt2-model-name", type=str, default="gpt2")
     p.add_argument("--base-tokens", type=int, default=None)
+    p.add_argument("--d-latent", type=int, default=32)
+    p.add_argument("--gap-dim", type=int, default=16)
+    p.add_argument("--gap-len", type=int, default=128)
+    p.add_argument("--k-rounds", type=int, default=6)
     p.add_argument("--chaos-substeps-per-round", type=int, default=1)
     p.add_argument("--chaos-svg-default-steps", type=int, default=2000)
     p.add_argument("--chaos-svg-max-steps", type=int, default=50000)
+    p.add_argument("--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default="auto")
+    p.add_argument("--gap-read-batch-size", type=int, default=128)
     p.add_argument("--corpus-file", type=str, default="data/bible.txt")
     p.add_argument("--world-len", type=int, default=200_000)
     p.add_argument("--world-vocab-size", type=int, default=512)
@@ -710,9 +716,15 @@ def main() -> None:
         token_space=str(args.token_space),
         gpt2_model_name=str(args.gpt2_model_name),
         base_tokens=int(base_tokens) if base_tokens is not None else EmeraConfig().base_tokens,
+        d_latent=max(int(args.d_latent), 4),
+        gap_dim=max(int(args.gap_dim), 4),
+        gap_len=max(int(args.gap_len), 4),
+        k_rounds=max(int(args.k_rounds), 1),
         chaos_substeps_per_round=max(int(args.chaos_substeps_per_round), 1),
         chaos_svg_default_steps=max(int(args.chaos_svg_default_steps), 1),
         chaos_svg_max_steps=max(int(args.chaos_svg_max_steps), int(args.chaos_svg_default_steps), 1),
+        gap_read_backend=str(args.gap_read_backend),
+        gap_read_batch_size=max(int(args.gap_read_batch_size), 1),
         corpus_file=corpus,
         world_len=int(args.world_len),
         world_vocab_size=int(world_vocab),

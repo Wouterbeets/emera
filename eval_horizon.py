@@ -180,6 +180,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train-steps", type=int, default=2000)
     p.add_argument("--world-vocab-size", type=int, default=512)
     p.add_argument("--world-len", type=int, default=None)
+    p.add_argument("--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default=None)
+    p.add_argument("--gap-read-batch-size", type=int, default=None)
     p.add_argument("--horizons", type=str, default="1,2,4,8,16,32,64,128,256")
     p.add_argument("--num-contexts", type=int, default=512)
     p.add_argument("--rollout-len", type=int, default=256)
@@ -252,6 +254,10 @@ def main() -> None:
             updates["world_vocab_size"] = 50257
     if args.proposal_lmax is not None:
         updates["proposal_lmax"] = int(args.proposal_lmax)
+    if args.gap_read_backend is not None:
+        updates["gap_read_backend"] = str(args.gap_read_backend)
+    if args.gap_read_batch_size is not None:
+        updates["gap_read_batch_size"] = int(args.gap_read_batch_size)
     if args.proposal_frontier_fallback is not None:
         updates["proposal_frontier_fallback"] = int(args.proposal_frontier_fallback)
     if args.proposal_frontier_contrast is not None:

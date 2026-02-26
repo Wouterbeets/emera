@@ -27,6 +27,8 @@ def build_config_from_args(args: argparse.Namespace) -> EmeraConfig:
         "d_latent",
         "gap_dim",
         "gap_len",
+        "gap_read_backend",
+        "gap_read_batch_size",
         "num_ifs",
         "chaos_substeps_per_round",
         "k_rounds",
@@ -257,6 +259,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--d-latent", type=int, default=None)
     p.add_argument("--gap-dim", type=int, default=None)
     p.add_argument("--gap-len", type=int, default=None)
+    p.add_argument("--gap-read-backend", type=str, choices=["auto", "numpy", "jax"], default=None)
+    p.add_argument("--gap-read-batch-size", type=int, default=None)
     p.add_argument("--num-ifs", type=int, default=None)
     p.add_argument("--chaos-substeps-per-round", type=int, default=None)
     p.add_argument("--k-rounds", type=int, default=None)
@@ -343,7 +347,8 @@ def main() -> None:
     t0 = time.time()
     print(
         f"Emera v2 start | seed={cfg.seed} | world_len={engine.world.length} | "
-        f"initial_super={len(engine.super_tokens)} | k_rounds={cfg.k_rounds}"
+        f"initial_super={len(engine.super_tokens)} | k_rounds={cfg.k_rounds} | "
+        f"gap_backend={engine.gap.read_backend} | gap_batch={cfg.gap_read_batch_size}"
     )
 
     log_every = cfg.log_every
