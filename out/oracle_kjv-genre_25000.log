@@ -1,0 +1,21 @@
+kjv-genre: 6 labels, train=7200 val=1200 test=1200
+  train counts: law=1200, history=1200, wisdom=1200, prophets=1200, gospels=1200, epistles=1200
+
+train time           412.5s (25000 steps)
+val   accuracy    0.4500
+test  accuracy    0.4208  (macro 0.4208)
+test  mean NLL    1.5184
+mean voters/ex    41.8 of 2390 organisms
+coverage          0.9992  (examples with at least one vote)
+oracle accuracy   0.9833  (best label among those voted for)
+baseline majority         0.1667
+
+per-class recall:
+  law          0.440
+  history      0.675
+  wisdom       0.345
+  prophets     0.355
+  gospels      0.330
+  epistles     0.380
+
+wrote out/oracle_kjv-genre_25000.json

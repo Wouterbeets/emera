@@ -1,0 +1,19 @@
+kjv-testament: 2 labels, train=2400 val=400 test=400
+  train counts: old=1200, new=1200
+
+train time            67.4s (8000 steps)
+val   accuracy    0.7200
+test  accuracy    0.7075  (macro 0.7075)
+test  mean NLL    0.5787
+mean voters/ex    15.2 of 601 organisms
+coverage          1.0000  (examples with at least one vote)
+oracle accuracy   0.9875  (best label among those voted for)
+same votes, majority0.6000
+same votes, winrate 0.7150
+baseline majority         0.5000
+
+per-class recall:
+  old          0.735
+  new          0.680
+
+wrote out/weight_kjv-testament_8000.json

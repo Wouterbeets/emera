@@ -1,0 +1,44 @@
+kjv-genre: 6 labels, train=7200 val=1200 test=1200
+  train counts: law=1200, history=1200, wisdom=1200, prophets=1200, gospels=1200, epistles=1200
+
+train time            98.4s (8000 steps)
+val   accuracy    0.4300
+test  accuracy    0.3908  (macro 0.3908)
+test  mean NLL    1.5735
+mean voters/ex    30.3 of 1405 organisms
+coverage          0.9992  (examples with at least one vote)
+oracle accuracy   0.9792  (best label among those voted for)
+same votes, majority0.3158
+same votes, winrate 0.3917
+baseline majority         0.1667
+baseline ngram_centroid   0.6383
+
+per-class recall:
+  law          0.245
+  history      0.530
+  wisdom       0.190
+  prophets     0.555
+  gospels      0.410
+  epistles     0.415
+
+top 18 organisms (pattern -> label):
+  '[is]'               -> prophets   E=  8.55 votes=  491 win%= 24.2 thr=0.30 stake=1.00 age=7381
+  'took'               -> law        E=  3.83 votes=  153 win%= 24.2 thr=0.30 stake=1.00 age=8000
+  'sait'               -> prophets   E=  3.29 votes=  138 win%= 53.6 thr=0.75 stake=0.91 age=3253
+  'sait'               -> prophets   E=  3.26 votes=  317 win%= 51.4 thr=0.30 stake=1.00 age=8000
+  'Jesu'               -> gospels    E=  3.23 votes=   90 win%= 64.4 thr=0.15 stake=1.36 age=2974
+  'sait'               -> prophets   E=  3.22 votes=  139 win%= 54.0 thr=0.56 stake=1.01 age=3314
+  'went'               -> prophets   E=  3.10 votes=  347 win%= 11.8 thr=0.30 stake=1.00 age=8000
+  'y was d'            -> gospels    E=  3.05 votes=   28 win%= 25.0 thr=0.30 stake=1.00 age=2593
+  'shal'               -> prophets   E=  3.00 votes= 1251 win%= 29.8 thr=0.16 stake=0.93 age=5909
+  'll t'               -> prophets   E=  2.99 votes=  512 win%= 22.3 thr=0.62 stake=1.08 age=4354
+  '[was]'              -> law        E=  2.98 votes=  187 win%= 23.5 thr=0.30 stake=1.00 age=7070
+  'king'               -> history    E=  2.97 votes=  120 win%= 42.5 thr=0.16 stake=1.20 age=1441
+  'priest'             -> history    E=  2.74 votes=  128 win%= 33.6 thr=0.30 stake=1.00 age=5935
+  'Jesu'               -> gospels    E=  2.71 votes=  170 win%= 68.2 thr=0.07 stake=1.14 age=5183
+  ' Mose'              -> law        E=  2.67 votes=  168 win%= 69.6 thr=0.30 stake=1.00 age=8000
+  'hair'               -> gospels    E=  2.62 votes=    4 win%= 25.0 thr=0.30 stake=1.00 age=2451
+  ' Mos'               -> law        E=  2.60 votes=  104 win%= 68.3 thr=0.72 stake=0.97 age=4940
+  'king'               -> history    E=  2.48 votes=  568 win%= 45.8 thr=0.08 stake=0.99 age=7560
+
+wrote out/final_kjv-genre_s44.json

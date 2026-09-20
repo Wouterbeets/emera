@@ -1,0 +1,44 @@
+kjv-genre: 6 labels, train=7200 val=1200 test=1200
+  train counts: law=1200, history=1200, wisdom=1200, prophets=1200, gospels=1200, epistles=1200
+
+train time           108.6s (8000 steps)
+val   accuracy    0.4000
+test  accuracy    0.3917  (macro 0.3917)
+test  mean NLL    1.5707
+mean voters/ex    31.5 of 1457 organisms
+coverage          0.9992  (examples with at least one vote)
+oracle accuracy   0.9725  (best label among those voted for)
+same votes, majority0.2942
+same votes, winrate 0.3808
+baseline majority         0.1667
+baseline ngram_centroid   0.6200
+
+per-class recall:
+  law          0.260
+  history      0.735
+  wisdom       0.285
+  prophets     0.315
+  gospels      0.420
+  epistles     0.335
+
+top 18 organisms (pattern -> label):
+  'thee'               -> history    E=  3.51 votes=  532 win%= 16.7 thr=0.30 stake=1.00 age=6102
+  'place'              -> wisdom     E=  3.17 votes=  268 win%= 15.7 thr=0.30 stake=1.00 age=8000
+  'have'               -> prophets   E=  3.13 votes=  319 win%= 31.0 thr=0.30 stake=1.00 age=3374
+  'aid,'               -> law        E=  3.06 votes=   83 win%= 27.7 thr=0.20 stake=1.01 age=1970
+  'halt'               -> law        E=  2.98 votes=  211 win%= 55.0 thr=0.23 stake=0.93 age=5418
+  'eart'               -> wisdom     E=  2.94 votes=  390 win%= 25.6 thr=0.22 stake=0.96 age=6509
+  'halt'               -> law        E=  2.91 votes=  198 win%= 56.1 thr=0.15 stake=0.99 age=5018
+  '[were] '            -> history    E=  2.89 votes=  167 win%= 47.9 thr=0.30 stake=1.00 age=8000
+  'e LO'               -> history    E=  2.82 votes=   67 win%= 26.9 thr=0.30 stake=1.00 age=478
+  'r, an'              -> history    E=  2.77 votes=  359 win%= 28.4 thr=0.30 stake=1.00 age=7660
+  'aid,'               -> law        E=  2.75 votes=   85 win%= 28.2 thr=0.15 stake=1.10 age=2067
+  ' God�D'             -> epistles   E=  2.73 votes=  399 win%= 31.6 thr=0.13 stake=1.07 age=3689
+  ' say'               -> gospels    E=  2.70 votes=  522 win%= 32.8 thr=0.30 stake=1.00 age=7542
+  'thee'               -> gospels    E=  2.65 votes=  688 win%= 13.2 thr=0.30 stake=1.00 age=8000
+  ' say'               -> gospels    E=  2.65 votes=  492 win%= 31.9 thr=0.51 stake=1.12 age=7046
+  'shalt}'             -> law        E=  2.63 votes=  277 win%= 54.5 thr=0.70 stake=1.12 age=7829
+  'righteou'           -> epistles   E=  2.62 votes=  111 win%= 20.7 thr=0.30 stake=1.00 age=3889
+  ' went'              -> gospels    E=  2.62 votes=  151 win%= 34.4 thr=0.30 stake=1.00 age=3892
+
+wrote out/final_kjv-genre_s45.json

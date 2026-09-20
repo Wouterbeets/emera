@@ -1,0 +1,36 @@
+kjv-testament: 2 labels, train=2400 val=400 test=400
+  train counts: old=1200, new=1200
+step   4000 | roll_acc 0.772 | pop  550 | res   8183.2 | E   9000.0 (drift +1.40e-07) | voters    8/ 550 | b/d 115/77
+step   8000 | roll_acc 0.746 | pop  590 | res   8123.5 | E   9000.0 (drift +1.23e-07) | voters    6/ 590 | b/d 164/86
+
+train time            68.2s (8000 steps)
+val   accuracy    0.7000
+test  accuracy    0.7200  (macro 0.7200)
+test  mean NLL    0.5601
+mean voters/ex    15.0 of 590 organisms
+baseline majority         0.5000
+baseline ngram_centroid   0.8200
+
+per-class recall:
+  old          0.675
+  new          0.765
+
+top 16 organisms (pattern -> label):
+  'LORD'               -> old        E=  3.60 votes=  715 win%=100.0 thr=0.42 stake=1.25 age=6041
+  'Jesu'               -> new        E=  3.28 votes=  385 win%=100.0 thr=0.16 stake=1.09 age=6753
+  'LORD'               -> old        E=  3.09 votes=  810 win%=100.0 thr=0.45 stake=1.12 age=6764
+  'LORD'               -> old        E=  2.98 votes=  874 win%=100.0 thr=0.18 stake=0.98 age=7220
+  'shoul'              -> new        E=  2.29 votes=  298 win%= 65.4 thr=0.30 stake=1.00 age=8000
+  'nigh'               -> old        E=  2.23 votes=   52 win%= 51.9 thr=0.30 stake=1.00 age=3256
+  'two d'              -> new        E=  2.19 votes=  148 win%= 35.8 thr=0.30 stake=1.00 age=8000
+  'came'               -> new        E=  2.15 votes=  473 win%= 54.3 thr=0.30 stake=1.00 age=8000
+  'behol'              -> new        E=  2.07 votes=  181 win%= 45.3 thr=0.30 stake=1.00 age=8000
+  'oly Gh'             -> new        E=  2.06 votes=  152 win%= 57.2 thr=0.30 stake=1.00 age=8000
+  'shoul'              -> new        E=  2.01 votes=  298 win%= 65.4 thr=0.30 stake=1.00 age=8000
+  'cannot'             -> old        E=  2.00 votes=   46 win%= 34.8 thr=0.30 stake=1.00 age=8000
+  'cords o'            -> old        E=  2.00 votes=  167 win%= 59.9 thr=0.30 stake=1.00 age=8000
+  'LORv'               -> old        E=  1.99 votes=    0 win%=  0.0 thr=0.75 stake=0.90 age=4379
+  'Judah'              -> new        E=  1.98 votes=  166 win%= 16.9 thr=0.30 stake=1.00 age=8000
+  'tempti'             -> old        E=  1.98 votes=   92 win%= 30.4 thr=0.30 stake=1.00 age=8000
+
+wrote out/cls_testament.json
