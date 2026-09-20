@@ -2,6 +2,7 @@ PYTHON ?= python3
 RUNNER := run.py
 DASHBOARD := dashboard.py
 ISLANDS_RUNNER := evolve_islands.py
+CLASSIFY_RUNNER := run_classify.py
 OUT_DIR := out
 
 # Bible-first defaults
@@ -20,6 +21,12 @@ DASH_GPT2_MODEL ?= gpt2
 DASH_CORPUS ?= data/tiny_bible.txt
 DASH_WORLD_VOCAB ?= 50257
 DASH_WORLD_LEN ?= 9213908
+CLS_TASK ?= kjv-genre
+CLS_STEPS ?= 8000
+CLS_LOG_EVERY ?= 1000
+CLS_EVAL_SIZE ?= 200
+CLS_SHOW_POP ?= 20
+CLS_JSON ?= $(OUT_DIR)/classify_$(STAMP).json
 GAP_READ_BACKEND ?= auto
 GAP_READ_BATCH ?= 128
 MAX_D_LATENT ?= 128
@@ -108,9 +115,21 @@ help:
 	@echo "  make run-max PYTHON=.venv/bin/python STEPS=20000"
 	@echo "  make dashboard DASH_STEPS_PER_TICK=2 DASH_SLEEP_MS=1"
 	@echo "  make islands PYTHON=.venv/bin/python ISLANDS=0 ISLAND_ROUNDS=6"
+	@echo "  make classify CLS_TASK=kjv-genre CLS_STEPS=8000"
+	@echo "  make classify-smoke"
 
 check:
 	$(PYTHON) -m py_compile *.py
+
+classify: check
+	mkdir -p $(OUT_DIR)
+	$(PYTHON) $(CLASSIFY_RUNNER) --task $(CLS_TASK) --steps $(CLS_STEPS) \
+		--seed $(SEED) --log-every $(CLS_LOG_EVERY) --eval-size $(CLS_EVAL_SIZE) \
+		--show-population $(CLS_SHOW_POP) --output-json $(CLS_JSON)
+
+classify-smoke: check
+	$(PYTHON) $(CLASSIFY_RUNNER) --task $(CLS_TASK) --steps 400 --log-every 200 \
+		--eval-size 100 --no-baselines --show-population 8
 
 smoke: check
 	mkdir -p $(OUT_DIR)
