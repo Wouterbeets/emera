@@ -145,8 +145,10 @@ a linear model.
 
 ## Runtime
 
-Single-core numpy on a 2.8 GHz Xeon: ~13 ms per training step at 1,400
-organisms, ~8 ms per inference. Cost scales with the organisms an example
+Single-core numpy on a 2.8 GHz Xeon, measured at ~870 organisms: **11.6 ms**
+per training step, **12.9 ms** per inference. (Inference is not cheaper than
+training because it snapshots and restores the population state so that
+evaluation cannot perturb it.) Cost scales with the organisms an example
 concerns, not with the population, so the 2,500-organism runs are not
 meaningfully slower per step.
 
