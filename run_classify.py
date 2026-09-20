@@ -124,6 +124,10 @@ def main() -> None:
     print(f"test  accuracy    {test['accuracy']:.4f}  (macro {test['macro_accuracy']:.4f})")
     print(f"test  mean NLL    {test['mean_nll']:.4f}")
     print(f"mean voters/ex    {test['mean_voters']:.1f} of {len(model.population)} organisms")
+    print(f"coverage          {test['coverage']:.4f}  (examples with at least one vote)")
+    print(f"oracle accuracy   {test['oracle_accuracy']:.4f}  (best label among those voted for)")
+    for name, value in sorted(test["variant_accuracy"].items()):
+        print(f"same votes, {name:<8}{value:.4f}")
 
     baselines: dict[str, float] = {"majority": task.majority_baseline()}
     if not args.no_baselines:

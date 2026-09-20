@@ -637,6 +637,28 @@ class EmeraClassifier:
             votes.append(Vote(token_id=tid, label=best, confidence=conf, stake=stake))
         return votes, abstained
 
+    def _readout_variants(self, votes: Sequence[Vote]) -> dict[str, int]:
+        """Aggregate the same votes under alternative weightings.
+
+        Diagnostic only - the model itself always uses `_readout`. The point is
+        to ask whether the energy economy is a good credit-assignment signal:
+        if plain majority or a smoothed empirical hit rate reads these same
+        votes better than wealth-and-return does, that is a fact about the
+        ledger, not about the rules.
+        """
+        out: dict[str, int] = {}
+        counts = np.zeros((self.num_labels,), dtype=np.float64)
+        rates = np.zeros((self.num_labels,), dtype=np.float64)
+        for vote in votes:
+            voter = self.population.get(vote.token_id)
+            if voter is None:
+                continue
+            counts[vote.label] += 1.0
+            rates[vote.label] += (voter.wins + 1.0) / (voter.votes + self.num_labels)
+        out["majority"] = int(np.argmax(counts)) if counts.sum() > 0 else -1
+        out["winrate"] = int(np.argmax(rates)) if rates.sum() > 0 else -1
+        return out
+
     def _readout(self, votes: Sequence[Vote]) -> tuple[int, np.ndarray]:
         ccfg = self.ccfg
         scores = np.zeros((self.num_labels,), dtype=np.float64)
@@ -886,9 +908,10 @@ class EmeraClassifier:
 
     # ------------------------------------------------------------- inference
 
-    def predict(self, text: str) -> tuple[int, np.ndarray, int]:
+    def predict(self, text: str, detail: bool = False):
         """Typed decision for one example: (label, probabilities, voters).
 
+        With `detail`, also returns the set of labels that received a vote.
         No energy changes hands, so evaluation cannot perturb the population.
         """
         raw = text.encode("utf-8", errors="ignore")
@@ -911,6 +934,14 @@ class EmeraClassifier:
             wake, strength = self._run_rounds(raw, feature, charge=False)
             votes, _ = self._collect_votes(wake, strength, charge=False)
             label, probs = self._readout(votes)
+            if detail:
+                return (
+                    label,
+                    probs,
+                    len(votes),
+                    {v.label for v in votes},
+                    self._readout_variants(votes),
+                )
             return label, probs, len(votes)
         finally:
             for tid, (state, phase, inactivity) in snapshot.items():
@@ -934,16 +965,31 @@ class EmeraClassifier:
         if not examples:
             return {"accuracy": 0.0, "n": 0}
         hits = 0
+        oracle_hits = 0
+        covered = 0
+        variant_hits: dict[str, int] = {}
         voter_counts: list[int] = []
         confusion = np.zeros((self.num_labels, self.num_labels), dtype=np.int64)
         nll = 0.0
         for ex in examples:
-            label, probs, n_voters = self.predict(ex.text)
+            label, probs, n_voters, voted, variants = self.predict(
+                ex.text, detail=True
+            )
+            for name, choice in variants.items():
+                if choice == ex.label:
+                    variant_hits[name] = variant_hits.get(name, 0) + 1
             confusion[ex.label, label] += 1
             voter_counts.append(n_voters)
             nll -= float(np.log(max(probs[ex.label], 1e-9)))
             if label == ex.label:
                 hits += 1
+            if n_voters > 0:
+                covered += 1
+            # Oracle: would a perfect aggregator over these same votes have
+            # been right? Separates "the rules do not know" from "the vote
+            # counting loses it".
+            if ex.label in voted:
+                oracle_hits += 1
         n = len(examples)
         per_class = np.zeros((self.num_labels,), dtype=np.float64)
         for c in range(self.num_labels):
@@ -951,6 +997,9 @@ class EmeraClassifier:
             per_class[c] = float(confusion[c, c]) / total if total else 0.0
         return {
             "accuracy": hits / n,
+            "oracle_accuracy": oracle_hits / n,
+            "coverage": covered / n,
+            "variant_accuracy": {k: v / n for k, v in variant_hits.items()},
             "macro_accuracy": float(per_class.mean()),
             "mean_nll": nll / n,
             "mean_voters": float(np.mean(voter_counts)) if voter_counts else 0.0,

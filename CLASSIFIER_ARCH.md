@@ -172,53 +172,72 @@ deterministic by index hash.
 
 ## 5. Results
 
-See `RESULTS.md` for measured numbers, baselines and sample populations.
+Full numbers, baselines, ablations and sample populations in `RESULTS.md`.
+Headline, 4 seeds, 8,000 steps:
+
+| task | majority | **emera** | n-gram centroid |
+|---|---:|---:|---:|
+| kjv-genre (6 classes) | 0.1667 | **0.3848 ± 0.0077** | 0.6650 |
+| kjv-testament (2 classes) | 0.5000 | **0.7112 ± 0.0279** | 0.8200 |
 
 ## 6. Honest assessment
 
-**What works.** The substrate transfers. Energy conservation holds exactly,
-selection produces a readable population of rules, and accuracy is well above
-chance and climbing with population size. The rules it finds are the ones a
-person would write: `'ciples' → gospels` at 96% precision, `'Abraham ' → law`
-at 82%.
+**What works.** The substrate transfers, and the central design claim survives
+contact with a measurement. Taking the same votes from the same population and
+aggregating them three ways, weighting by energy and return on stake beats
+plain vote-counting by 6-12 points and matches or slightly beats explicitly
+tracking how often each rule has been right — *without ever recording that
+statistic*. It falls out of who can afford to bet. Energy conservation is exact
+to float64 rounding. And the population reads as text: nothing told it that
+`LORD` marks the Old Testament or `Jesu` the New, and it found both at 100%
+precision over hundreds of votes.
 
-**What does not, yet.** It is beaten by a hashed n-gram centroid baseline that
-takes under a second to fit. The evolved population is a *weaker* ensemble of
-*more interesting* rules. The gap between them is mostly coverage: a rule only
-votes when its pattern occurs, so most of the population is silent on any given
-example, and a decision rests on a few dozen votes.
+**What does not.** It loses to a hashed n-gram centroid baseline that fits in
+under a second — by 28 points on genre, 11 on testament. It also plateaus:
+tripling the training steps grows the population by 70% and buys about one
+point of accuracy, inside the seed-to-seed spread.
 
-**Where this is actually interesting.** Not as a way to get accuracy — a linear
-model on character n-grams wins that, and a 322M-parameter encoder wins it by a
-mile. It is interesting as a system that (a) produces a *readable, editable*
-decision policy, (b) adds rules incrementally without retraining anything, and
-(c) has a principled abstention story, since an organism that does not
-recognise an example genuinely does not vote. Those are the three things a
-dense encoder cannot give you, and they are worth something in exactly the
-setting laya targets: a typed decision inside a piece of software, where you
-have to explain why it chose what it chose.
+**Why, as far as this can tell.** Not coverage — 99.96% of examples get votes.
+The likeliest cause is how thin the evidence per decision is. A verse has ~200
+character 4-grams; the centroid baseline uses all of them, idf-weighted, while
+the population reads about 31 single-pattern votes. Most of what each example
+says is never read by anybody.
 
-**The comparison that would settle it.** Same typed-decision interface as laya
-— `predict(state, {question: {type, criteria}})` — over the same questions, and
-report accuracy, latency and abstention rate side by side. The interface is
-already the same shape; it is the wrapper that is missing.
+**And the gap field is not currently earning its place.** Varying how much of
+the wake decision comes from resonance rather than literal pattern match —
+0.00, 0.20, 0.50 — moves accuracy by less than the seed noise. Resonance still
+enters through `chaos_step`, so this shows the medium does not help decide *who
+speaks*, not that it does nothing; a clean test needs the chaos path cut too.
+Either way, the shared medium is the most distinctive thing about this design
+and it is not yet demonstrably doing work.
+
+**Where this could still be interesting.** Not accuracy — a linear model wins
+that, and a 322M-parameter encoder wins it by a mile. It is interesting as a
+system that produces a *readable, editable* decision policy, adds rules
+incrementally without retraining anything, and has a principled abstention
+story, since an organism that does not recognise an example genuinely does not
+vote. Those are three things a dense encoder cannot give you, and they matter
+in exactly the setting laya targets: a typed decision inside a piece of
+software, where you have to be able to say why it chose what it chose.
 
 ## 7. Next steps, in order of expected value
 
-1. **Coverage.** Each organism votes on ~1% of examples. Either grow the
-   population by another order of magnitude (the index supports it) or let one
-   organism carry several patterns.
-2. **Symbiogenesis.** Pair fusion is not yet implemented here. Two rules that
-   are individually weak but jointly decisive — `'shall'` + `'LORD'` — are
-   exactly what minting is for, and conjunctions are where a rule ensemble
-   normally beats a bag of n-grams.
-3. **Make resonance earn its place.** Wake is currently 80% literal pattern
-   match. Measure accuracy as that weight goes to zero: if the gap field
-   contributes nothing, either the coupling is wrong or the medium is not
-   carrying information, and it is better to know which.
-4. **The typed-decision wrapper.** `score` and `noul` are both trivial
-   given the current readout: an ordered codebook for the former, two labels for
-   the latter.
+1. **Symbiogenesis.** This is the one that decides whether the architecture has
+   a real advantage. Pair fusion exists in the book-world engine and is not
+   implemented here. A rule firing on `shall` *and* `LORD` is something a bag
+   of n-grams structurally cannot represent, and conjunctions are precisely
+   where a rule ensemble is supposed to beat one. If fusion does not close the
+   gap to the centroid baseline, this architecture is a more expensive way to
+   be worse than a linear model, and that is worth knowing.
+2. **Read more of each example.** An organism votes once, on one pattern. Let
+   it carry several patterns, or let the vote's weight scale with how much of
+   the example it matched, so a decision rests on more than 31 ballots.
+3. **Settle the gap field.** Ablate resonance from `chaos_step` as well as from
+   the wake decision. If accuracy is unchanged, the medium is decorative on
+   this task and the coupling needs rethinking — better to know than to assume.
+4. **The typed-decision wrapper.** `score` and `noul` are both easy given the
+   current readout: an ordered codebook for the former, two labels for the
+   latter. That would make the interface directly comparable to laya's.
 5. **Calibration.** The readout temperature is a constant. Laya calibrates per
    question type and option count; the same treatment would make the
    probabilities mean something.
