@@ -1,0 +1,44 @@
+kjv-genre: 6 labels, train=7200 val=1200 test=1200
+  train counts: law=1200, history=1200, wisdom=1200, prophets=1200, gospels=1200, epistles=1200
+
+train time           107.2s (8000 steps)
+val   accuracy    0.3700
+test  accuracy    0.3758  (macro 0.3758)
+test  mean NLL    1.5827
+mean voters/ex    32.6 of 1360 organisms
+coverage          1.0000  (examples with at least one vote)
+oracle accuracy   0.9708  (best label among those voted for)
+same votes, majority0.2958
+same votes, winrate 0.3717
+baseline majority         0.1667
+baseline ngram_centroid   0.6650
+
+per-class recall:
+  law          0.355
+  history      0.525
+  wisdom       0.340
+  prophets     0.365
+  gospels      0.385
+  epistles     0.285
+
+top 18 organisms (pattern -> label):
+  'hildre'             -> law        E=  3.85 votes=  107 win%= 43.9 thr=0.36 stake=1.08 age=2457
+  'mouth,'             -> wisdom     E=  3.77 votes=   96 win%= 32.3 thr=0.30 stake=1.00 age=7136
+  'childre'            -> law        E=  3.57 votes=  378 win%= 38.1 thr=0.30 stake=1.00 age=7734
+  'hildre'             -> law        E=  3.48 votes=  364 win%= 37.6 thr=0.19 stake=0.98 age=7617
+  'sons'               -> history    E=  3.42 votes=  213 win%= 50.2 thr=0.30 stake=1.00 age=6973
+  'childre'            -> law        E=  3.19 votes=   48 win%= 45.8 thr=0.18 stake=0.94 age=1257
+  'hardne'             -> epistles   E=  3.18 votes=   25 win%= 12.0 thr=0.30 stake=1.00 age=7384
+  'him,'               -> gospels    E=  3.08 votes=  276 win%= 46.4 thr=0.30 stake=1.00 age=5758
+  'word'               -> prophets   E=  3.00 votes=  413 win%= 31.2 thr=0.30 stake=1.00 age=8000
+  'him,'               -> gospels    E=  2.97 votes=  177 win%= 44.1 thr=0.18 stake=1.13 age=3655
+  '[was'               -> history    E=  2.87 votes=  150 win%= 51.3 thr=0.30 stake=1.00 age=4653
+  'Then'               -> history    E=  2.84 votes=  326 win%= 24.5 thr=0.30 stake=1.00 age=8000
+  ' will '             -> prophets   E=  2.80 votes=  780 win%= 32.4 thr=0.30 stake=1.00 age=7548
+  'snar'               -> wisdom     E=  2.75 votes=   20 win%= 70.0 thr=0.30 stake=1.00 age=7136
+  '[are'               -> wisdom     E=  2.73 votes=  184 win%= 21.7 thr=0.30 stake=1.00 age=6094
+  'Lord Je'            -> gospels    E=  2.71 votes=  292 win%= 32.9 thr=0.30 stake=1.00 age=8000
+  'Chri'               -> gospels    E=  2.70 votes=  243 win%= 16.0 thr=0.30 stake=1.00 age=8000
+  'will'               -> prophets   E=  2.64 votes=  734 win%= 34.2 thr=0.30 stake=1.00 age=8000
+
+wrote out/final_kjv-genre_s42.json

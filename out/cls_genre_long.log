@@ -1,0 +1,42 @@
+kjv-genre: 6 labels, train=7200 val=1200 test=1200
+  train counts: law=1200, history=1200, wisdom=1200, prophets=1200, gospels=1200, epistles=1200
+step   5000 | roll_acc 0.374 | pop 1035 | res   7436.3 | E   9000.0 (drift -1.53e-08) | voters   43/1035 | b/d 726/203
+step  10000 | roll_acc 0.412 | pop 1511 | res   6698.7 | E   9000.0 (drift -6.11e-08) | voters   74/1511 | b/d 1316/317
+step  15000 | roll_acc 0.444 | pop 1953 | res   5991.9 | E   9000.0 (drift -1.16e-07) | voters   42/1953 | b/d 1821/380
+step  20000 | roll_acc 0.420 | pop 2306 | res   5469.9 | E   9000.0 (drift -1.80e-07) | voters   22/2306 | b/d 2215/421
+step  25000 | roll_acc 0.450 | pop 2735 | res   4807.7 | E   9000.0 (drift -2.51e-07) | voters  113/2735 | b/d 2667/444
+
+train time           434.4s (25000 steps)
+val   accuracy    0.4000
+test  accuracy    0.4175  (macro 0.4175)
+test  mean NLL    1.5231
+mean voters/ex    44.2 of 2735 organisms
+baseline majority         0.1667
+
+per-class recall:
+  law          0.345
+  history      0.610
+  wisdom       0.375
+  prophets     0.420
+  gospels      0.450
+  epistles     0.305
+
+top 16 organisms (pattern -> label):
+  'avid'               -> history    E=  4.41 votes=  189 win%= 77.2 thr=0.17 stake=1.55 age=6298
+  'avid'               -> history    E=  4.40 votes=  262 win%= 76.0 thr=0.10 stake=1.52 age=9237
+  'avid'               -> history    E=  4.34 votes=  384 win%= 76.3 thr=0.18 stake=1.39 age=14223
+  'avid'               -> history    E=  4.34 votes=   69 win%= 87.0 thr=0.31 stake=1.62 age=2014
+  'avid'               -> history    E=  4.09 votes=  470 win%= 75.7 thr=0.41 stake=1.33 age=17682
+  'avid'               -> history    E=  4.09 votes=   62 win%= 87.1 thr=0.05 stake=1.45 age=1675
+  'f his '             -> wisdom     E=  4.07 votes=  140 win%= 18.6 thr=0.60 stake=1.13 age=4311
+  'thre'               -> epistles   E=  3.69 votes=  925 win%= 25.4 thr=0.30 stake=1.00 age=25000
+  'said'               -> history    E=  3.63 votes=  525 win%= 30.7 thr=0.32 stake=1.55 age=5050
+  'avidx'              -> history    E=  3.58 votes=   72 win%= 87.5 thr=0.06 stake=1.57 age=2082
+  'discipl'            -> gospels    E=  3.56 votes=  197 win%= 78.2 thr=0.19 stake=1.06 age=16410
+  '[and'               -> wisdom     E=  3.54 votes=  894 win%= 29.1 thr=0.30 stake=1.00 age=24304
+  'f his h'            -> wisdom     E=  3.38 votes= 1016 win%= 20.2 thr=0.30 stake=1.00 age=24077
+  'said'               -> history    E=  3.29 votes= 1956 win%= 31.0 thr=0.30 stake=1.00 age=18000
+  'said'               -> history    E=  3.26 votes= 1844 win%= 30.9 thr=0.16 stake=1.03 age=16761
+  'avid`'              -> history    E=  3.25 votes=  419 win%= 76.6 thr=0.20 stake=1.13 age=15583
+
+wrote out/cls_genre_long.json

@@ -1,0 +1,40 @@
+kjv-testament: 2 labels, train=2400 val=400 test=400
+  train counts: old=1200, new=1200
+
+train time            72.7s (8000 steps)
+val   accuracy    0.7400
+test  accuracy    0.6950  (macro 0.6950)
+test  mean NLL    0.5901
+mean voters/ex    14.2 of 577 organisms
+coverage          1.0000  (examples with at least one vote)
+oracle accuracy   0.9925  (best label among those voted for)
+same votes, majority0.5550
+same votes, winrate 0.6350
+baseline majority         0.5000
+baseline ngram_centroid   0.8500
+
+per-class recall:
+  old          0.745
+  new          0.645
+
+top 18 organisms (pattern -> label):
+  'LORD'               -> old        E=  3.65 votes=  824 win%= 99.9 thr=0.17 stake=1.09 age=6263
+  'LORD'               -> old        E=  3.54 votes= 1075 win%= 99.7 thr=0.30 stake=1.00 age=8000
+  ' whom '             -> new        E=  3.42 votes=  358 win%= 67.9 thr=0.30 stake=1.00 age=4443
+  'then'               -> new        E=  2.63 votes=  297 win%= 49.8 thr=0.30 stake=1.00 age=6989
+  'take'               -> new        E=  2.26 votes=  239 win%= 62.3 thr=0.30 stake=1.00 age=6747
+  'Christ'             -> new        E=  2.10 votes=  268 win%=100.0 thr=0.30 stake=1.00 age=8000
+  'ey f'               -> new        E=  2.10 votes=   37 win%= 45.9 thr=0.30 stake=1.00 age=7314
+  'Christ|'            -> new        E=  2.07 votes=  251 win%=100.0 thr=0.15 stake=1.11 age=7624
+  'Chri9t'             -> new        E=  2.04 votes=   37 win%=100.0 thr=0.18 stake=0.82 age=1228
+  'of Chris'           -> new        E=  2.00 votes=   91 win%= 59.3 thr=0.30 stake=1.00 age=8000
+  'forgive'            -> old        E=  2.00 votes=   50 win%= 26.0 thr=0.30 stake=1.00 age=8000
+  'ne of y'            -> old        E=  2.00 votes=  168 win%= 42.3 thr=0.30 stake=1.00 age=8000
+  'bless'              -> old        E=  2.00 votes=  138 win%= 55.1 thr=0.30 stake=1.00 age=8000
+  'mone'               -> new        E=  1.99 votes=    8 win%= 37.5 thr=0.30 stake=1.00 age=8000
+  'Joseph;'            -> old        E=  1.98 votes=   27 win%= 70.4 thr=0.30 stake=1.00 age=4895
+  'lice'               -> old        E=  1.98 votes=   18 win%= 38.9 thr=0.30 stake=1.00 age=8000
+  'cherishe'           -> old        E=  1.95 votes=   37 win%= 54.1 thr=0.30 stake=1.00 age=8000
+  'Saul’s'             -> old        E=  1.95 votes=   75 win%= 92.0 thr=0.30 stake=1.00 age=8000
+
+wrote out/final_kjv-testament_s43.json

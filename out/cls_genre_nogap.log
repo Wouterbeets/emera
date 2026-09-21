@@ -1,0 +1,38 @@
+kjv-genre: 6 labels, train=7200 val=1200 test=1200
+  train counts: law=1200, history=1200, wisdom=1200, prophets=1200, gospels=1200, epistles=1200
+step   5000 | roll_acc 0.380 | pop 1084 | res   7355.7 | E   9000.0 (drift -1.42e-08) | voters   37/1084 | b/d 744/172
+
+train time            99.2s (8000 steps)
+val   accuracy    0.3700
+test  accuracy    0.3942  (macro 0.3942)
+test  mean NLL    1.5813
+mean voters/ex    32.2 of 1487 organisms
+baseline majority         0.1667
+
+per-class recall:
+  law          0.370
+  history      0.500
+  wisdom       0.275
+  prophets     0.435
+  gospels      0.455
+  epistles     0.330
+
+top 16 organisms (pattern -> label):
+  'chil'               -> law        E=  4.16 votes=  378 win%= 38.1 thr=0.30 stake=1.00 age=7734
+  'chil'               -> law        E=  4.04 votes=  366 win%= 37.4 thr=0.70 stake=1.16 age=7617
+  'chil'               -> law        E=  3.91 votes=   48 win%= 45.8 thr=0.98 stake=1.13 age=1257
+  'mouth'              -> wisdom     E=  3.62 votes=   96 win%= 32.3 thr=0.30 stake=1.00 age=7136
+  'wick'               -> wisdom     E=  3.59 votes=   20 win%= 60.0 thr=0.30 stake=1.00 age=1584
+  'came'               -> prophets   E=  3.44 votes=  519 win%= 13.3 thr=0.30 stake=1.00 age=8000
+  'e frui'             -> law        E=  3.40 votes=  209 win%= 27.3 thr=0.30 stake=1.00 age=8000
+  'your'               -> epistles   E=  3.30 votes=  279 win%= 24.4 thr=0.30 stake=1.00 age=5263
+  'upon'               -> epistles   E=  3.24 votes=  643 win%=  5.8 thr=0.30 stake=1.00 age=8000
+  'saith'              -> prophets   E=  3.23 votes=  290 win%= 58.6 thr=0.30 stake=1.00 age=8000
+  'saitm'              -> prophets   E=  3.13 votes=  186 win%= 59.1 thr=0.50 stake=0.92 age=5451
+  'word'               -> prophets   E=  3.12 votes=  413 win%= 33.7 thr=0.30 stake=1.00 age=8000
+  'Chri'               -> gospels    E=  3.12 votes=  243 win%= 16.0 thr=0.30 stake=1.00 age=8000
+  'becaus'             -> history    E=  3.00 votes=  272 win%= 17.3 thr=0.30 stake=1.00 age=8000
+  'Chri'               -> epistles   E=  2.96 votes=  105 win%= 85.7 thr=0.27 stake=1.10 age=3588
+  'land'               -> prophets   E=  2.91 votes=  348 win%= 34.2 thr=0.30 stake=1.00 age=8000
+
+wrote out/cls_genre_nogap.json

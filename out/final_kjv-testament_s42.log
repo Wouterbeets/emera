@@ -1,0 +1,40 @@
+kjv-testament: 2 labels, train=2400 val=400 test=400
+  train counts: old=1200, new=1200
+
+train time            67.0s (8000 steps)
+val   accuracy    0.7400
+test  accuracy    0.7125  (macro 0.7125)
+test  mean NLL    0.5798
+mean voters/ex    14.7 of 607 organisms
+coverage          0.9950  (examples with at least one vote)
+oracle accuracy   0.9800  (best label among those voted for)
+same votes, majority0.5975
+same votes, winrate 0.7075
+baseline majority         0.5000
+baseline ngram_centroid   0.8200
+
+per-class recall:
+  old          0.680
+  new          0.745
+
+top 18 organisms (pattern -> label):
+  'LORD'               -> old        E=  3.71 votes=  695 win%=100.0 thr=0.17 stake=1.18 age=5937
+  'LORD'               -> old        E=  3.43 votes=  951 win%=100.0 thr=0.30 stake=1.00 age=8000
+  'Jesu'               -> new        E=  3.34 votes=  454 win%=100.0 thr=0.30 stake=1.00 age=8000
+  'LORD'               -> old        E=  3.17 votes=  841 win%=100.0 thr=0.50 stake=0.93 age=6961
+  'shoul'              -> new        E=  2.43 votes=  298 win%= 65.4 thr=0.30 stake=1.00 age=8000
+  'Jesu'               -> new        E=  2.27 votes=  381 win%=100.0 thr=0.74 stake=0.91 age=6684
+  'came'               -> new        E=  2.26 votes=  473 win%= 54.3 thr=0.30 stake=1.00 age=8000
+  'take'               -> new        E=  2.07 votes=  306 win%= 51.6 thr=0.30 stake=1.00 age=8000
+  'at th'              -> new        E=  2.01 votes=  825 win%= 52.6 thr=0.30 stake=1.00 age=8000
+  'reprov'             -> new        E=  2.00 votes=   65 win%= 50.8 thr=0.30 stake=1.00 age=8000
+  'And,'               -> new        E=  2.00 votes=   46 win%= 71.7 thr=0.30 stake=1.00 age=8000
+  '`ORD'               -> old        E=  2.00 votes=    0 win%=  0.0 thr=0.58 stake=0.84 age=580
+  'LO-RD'              -> old        E=  1.99 votes=    0 win%=  0.0 thr=0.13 stake=1.06 age=6757
+  'LOYD'               -> new        E=  1.99 votes=    0 win%=  0.0 thr=0.25 stake=0.81 age=5953
+  'ay from'            -> old        E=  1.99 votes=   74 win%= 71.6 thr=0.30 stake=1.00 age=8000
+  'groun'              -> old        E=  1.98 votes=   53 win%= 64.2 thr=0.30 stake=1.00 age=8000
+  'godlin'             -> old        E=  1.98 votes=   23 win%= 13.0 thr=0.30 stake=1.00 age=8000
+  'finge'              -> old        E=  1.98 votes=   16 win%= 93.8 thr=0.30 stake=1.00 age=8000
+
+wrote out/final_kjv-testament_s42.json

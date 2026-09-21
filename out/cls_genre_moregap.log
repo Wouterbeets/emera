@@ -1,0 +1,38 @@
+kjv-genre: 6 labels, train=7200 val=1200 test=1200
+  train counts: law=1200, history=1200, wisdom=1200, prophets=1200, gospels=1200, epistles=1200
+step   5000 | roll_acc 0.358 | pop 1049 | res   7426.6 | E   9000.0 (drift -1.17e-09) | voters   26/1049 | b/d 686/149
+
+train time           104.3s (8000 steps)
+val   accuracy    0.3350
+test  accuracy    0.3975  (macro 0.3975)
+test  mean NLL    1.5707
+mean voters/ex    26.5 of 1309 organisms
+baseline majority         0.1667
+
+per-class recall:
+  law          0.410
+  history      0.580
+  wisdom       0.400
+  prophets     0.420
+  gospels      0.290
+  epistles     0.285
+
+top 16 organisms (pattern -> label):
+  'kings'              -> history    E=  3.80 votes=   68 win%= 42.6 thr=0.30 stake=1.00 age=936
+  'chil'               -> law        E=  3.79 votes=   88 win%= 45.5 thr=0.13 stake=1.23 age=2144
+  'word'               -> prophets   E=  3.63 votes=  413 win%= 32.4 thr=0.30 stake=1.00 age=8000
+  'chil'               -> law        E=  3.62 votes=  230 win%= 39.1 thr=0.30 stake=1.00 age=5045
+  'sons'               -> history    E=  3.62 votes=  178 win%= 49.4 thr=0.30 stake=1.00 age=5605
+  'chil+'              -> law        E=  3.49 votes=  114 win%= 43.9 thr=0.15 stake=1.13 age=2580
+  'chil'               -> wisdom     E=  3.38 votes=   43 win%= 16.3 thr=0.30 stake=1.00 age=1058
+  'will'               -> prophets   E=  3.31 votes=  325 win%= 32.6 thr=0.19 stake=1.00 age=3712
+  '[was'               -> history    E=  3.20 votes=  260 win%= 47.3 thr=0.30 stake=1.00 age=7819
+  'congrega'           -> law        E=  2.97 votes=   19 win%= 78.9 thr=0.14 stake=1.05 age=1539
+  'angel'              -> epistles   E=  2.95 votes=  200 win%= 26.5 thr=0.30 stake=1.00 age=6776
+  'came'               -> prophets   E=  2.95 votes=  321 win%= 12.5 thr=0.30 stake=1.00 age=5106
+  'atio'               -> prophets   E=  2.64 votes=  328 win%= 24.1 thr=0.30 stake=1.00 age=4251
+  'Chri'               -> epistles   E=  2.58 votes=  228 win%= 83.3 thr=0.30 stake=1.00 age=7384
+  'Chri'               -> epistles   E=  2.53 votes=  203 win%= 82.3 thr=0.14 stake=1.12 age=6549
+  'congrega'           -> law        E=  2.47 votes=   71 win%= 74.6 thr=0.30 stake=1.00 age=5512
+
+wrote out/cls_genre_moregap.json

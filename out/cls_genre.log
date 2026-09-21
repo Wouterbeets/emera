@@ -1,0 +1,40 @@
+kjv-genre: 6 labels, train=7200 val=1200 test=1200
+  train counts: law=1200, history=1200, wisdom=1200, prophets=1200, gospels=1200, epistles=1200
+step   4000 | roll_acc 0.376 | pop  963 | res   7533.1 | E   9000.0 (drift +4.18e-09) | voters    9/ 963 | b/d 594/143
+step   8000 | roll_acc 0.408 | pop 1323 | res   6975.2 | E   9000.0 (drift -2.86e-08) | voters   45/1323 | b/d 1002/191
+
+train time            97.6s (8000 steps)
+val   accuracy    0.4050
+test  accuracy    0.3950  (macro 0.3950)
+test  mean NLL    1.5569
+mean voters/ex    28.4 of 1323 organisms
+baseline majority         0.1667
+baseline ngram_centroid   0.6650
+
+per-class recall:
+  law          0.350
+  history      0.515
+  wisdom       0.405
+  prophets     0.410
+  gospels      0.380
+  epistles     0.310
+
+top 16 organisms (pattern -> label):
+  'king'               -> history    E=  3.85 votes=  517 win%= 41.8 thr=0.30 stake=1.00 age=6527
+  'chilx'              -> law        E=  3.63 votes=  108 win%= 43.5 thr=0.63 stake=0.95 age=2457
+  'king'               -> history    E=  3.57 votes=  474 win%= 40.9 thr=0.18 stake=0.97 age=6024
+  'child'              -> law        E=  3.39 votes=  140 win%= 42.9 thr=0.30 stake=1.00 age=3202
+  'side'               -> wisdom     E=  3.24 votes=  159 win%= 11.3 thr=0.30 stake=1.00 age=8000
+  'esus8'              -> gospels    E=  3.02 votes=  155 win%= 56.8 thr=0.19 stake=1.25 age=3859
+  'word'               -> prophets   E=  2.81 votes=  154 win%= 32.5 thr=0.15 stake=1.18 age=2997
+  'knowle'             -> prophets   E=  2.79 votes=  318 win%= 21.4 thr=0.30 stake=1.00 age=8000
+  'th see'             -> prophets   E=  2.79 votes=  176 win%= 30.7 thr=0.30 stake=1.00 age=6141
+  ' will '             -> prophets   E=  2.76 votes=  349 win%= 30.4 thr=0.14 stake=0.89 age=3564
+  'him,'               -> gospels    E=  2.73 votes=  290 win%= 45.2 thr=0.63 stake=1.08 age=6043
+  'him,'               -> gospels    E=  2.72 votes=  343 win%= 44.6 thr=0.30 stake=1.00 age=7078
+  'desola'             -> prophets   E=  2.70 votes=   55 win%= 65.5 thr=0.30 stake=1.00 age=7548
+  ' will '             -> prophets   E=  2.67 votes=  780 win%= 32.4 thr=0.30 stake=1.00 age=7548
+  'Chri'               -> gospels    E=  2.66 votes=  243 win%= 16.0 thr=0.30 stake=1.00 age=8000
+  ' wil5l '            -> prophets   E=  2.66 votes=  341 win%= 29.9 thr=0.16 stake=0.98 age=3476
+
+wrote out/cls_genre.json

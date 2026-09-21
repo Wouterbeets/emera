@@ -1,0 +1,40 @@
+kjv-testament: 2 labels, train=2400 val=400 test=400
+  train counts: old=1200, new=1200
+
+train time            67.3s (8000 steps)
+val   accuracy    0.7100
+test  accuracy    0.7500  (macro 0.7500)
+test  mean NLL    0.5392
+mean voters/ex    15.7 of 577 organisms
+coverage          0.9950  (examples with at least one vote)
+oracle accuracy   0.9875  (best label among those voted for)
+same votes, majority0.5775
+same votes, winrate 0.6900
+baseline majority         0.5000
+baseline ngram_centroid   0.8425
+
+per-class recall:
+  old          0.835
+  new          0.665
+
+top 18 organisms (pattern -> label):
+  ' LOR'               -> old        E=  3.66 votes=  947 win%= 99.7 thr=0.30 stake=1.00 age=8000
+  'Jesu'               -> new        E=  3.65 votes=  385 win%=100.0 thr=0.32 stake=0.98 age=6783
+  'Jesu'               -> new        E=  2.94 votes=  455 win%=100.0 thr=0.30 stake=1.00 age=8000
+  'Chris'              -> new        E=  2.86 votes=   68 win%=100.0 thr=0.48 stake=1.07 age=1749
+  'Chris'              -> new        E=  2.85 votes=  167 win%=100.0 thr=0.30 stake=1.00 age=4474
+  'othe'               -> new        E=  2.80 votes=  305 win%= 64.6 thr=0.30 stake=1.00 age=4474
+  'Chris'              -> new        E=  2.22 votes=   53 win%=100.0 thr=0.43 stake=1.02 age=1398
+  'ven a'              -> new        E=  2.14 votes=  572 win%= 50.3 thr=0.30 stake=1.00 age=8000
+  'you,'               -> new        E=  2.06 votes=  335 win%= 79.7 thr=0.30 stake=1.00 age=8000
+  'sons'               -> old        E=  2.04 votes=  153 win%= 81.7 thr=0.30 stake=1.00 age=6762
+  'face'               -> new        E=  2.00 votes=  106 win%= 26.4 thr=0.30 stake=1.00 age=8000
+  'obeye'              -> old        E=  1.99 votes=   46 win%= 39.1 thr=0.30 stake=1.00 age=8000
+  '!esu'               -> new        E=  1.99 votes=    0 win%=  0.0 thr=0.17 stake=1.01 age=548
+  'Omri'               -> new        E=  1.99 votes=   11 win%=  0.0 thr=0.30 stake=1.00 age=8000
+  'build'              -> old        E=  1.98 votes=  101 win%= 64.4 thr=0.30 stake=1.00 age=8000
+  'could'              -> old        E=  1.98 votes=   56 win%= 26.8 thr=0.30 stake=1.00 age=8000
+  'ducees'             -> old        E=  1.98 votes=    5 win%=  0.0 thr=0.30 stake=1.00 age=8000
+  'came'               -> old        E=  1.97 votes=  592 win%= 47.5 thr=0.30 stake=1.00 age=8000
+
+wrote out/final_kjv-testament_s44.json
